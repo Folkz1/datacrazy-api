@@ -1,0 +1,23 @@
+import uuid
+from datetime import datetime
+
+from sqlalchemy import String, Boolean, DateTime, JSON, func
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.database import Base
+
+
+class Client(Base):
+    __tablename__ = "clients"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    pixel_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    meta_access_token: Mapped[str] = mapped_column(String(500), nullable=False)
+    events_enabled: Mapped[list] = mapped_column(JSON, default=["Purchase", "Lead"])
+    crm_credentials: Mapped[dict] = mapped_column(JSON, default={})
+    api_key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
