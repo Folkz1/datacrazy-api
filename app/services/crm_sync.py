@@ -179,15 +179,22 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
             px_label = pixel.get("label", "")
 
             # Dedup inclui pixel_id para não pular segundo pixel do mesmo deal
+            # Also checks legacy events WITHOUT pixel_id (backward compat)
             dedup_key = f"{client.id}:{biz_id}:{event_type}:{px_id}"
             try:
                 async with async_session() as db:
                     existing = await db.execute(
-                        text("SELECT id FROM events WHERE client_id = :cid AND event_data->>'business_id' = :bid AND event_data->>'pixel_id' = :pid AND event_type = :etype AND status = 'sent' LIMIT 1"),
+                        text("""SELECT id FROM events
+                               WHERE client_id = :cid
+                               AND event_data->>'business_id' = :bid
+                               AND event_type = :etype
+                               AND status = 'sent'
+                               AND (event_data->>'pixel_id' = :pid OR event_data->>'pixel_id' IS NULL)
+                               LIMIT 1"""),
                         {"cid": str(client.id), "bid": str(biz_id), "pid": px_id, "etype": event_type}
                     )
                     if existing.scalar_one_or_none():
-                        continue  # Já disparado para este pixel
+                        continue  # Já disparado para este pixel (ou sem pixel = legado)
             except Exception:
                 pass
 
