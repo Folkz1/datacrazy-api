@@ -119,8 +119,8 @@
         </div>
       </div>
       <div>
-        <label class="text-xs text-gray-400">Token DataCrazy CRM (opcional)</label>
-        <input id="nc-crm-token" type="text" class="w-full" placeholder="dc_eyJhbG...">
+        <label class="text-xs text-gray-400">Token DataCrazy CRM (opcional) <span id="cf-crm-hint" class="text-gray-600"></span></label>
+        <input id="nc-crm-token" type="text" class="w-full" placeholder="Token DataCrazy (opcional)">
       </div>
     </div>
 
@@ -478,10 +478,13 @@ function showNewClient() {
   document.getElementById('cf-title').textContent = 'Cadastrar Cliente';
   document.getElementById('cf-btn').textContent = 'Criar Cliente';
   document.getElementById('cf-token-hint').textContent = '';
+  document.getElementById('cf-crm-hint').textContent = '';
   document.getElementById('nc-name').value = '';
   document.getElementById('nc-pixel').value = '';
   document.getElementById('nc-token').value = '';
+  document.getElementById('nc-token').placeholder = 'EAATvcmlRNpc...';
   document.getElementById('nc-crm-token').value = '';
+  document.getElementById('nc-crm-token').placeholder = 'Token DataCrazy (opcional)';
   document.querySelectorAll('.nc-events').forEach(cb => cb.checked = ['Purchase','Lead'].includes(cb.value));
   document.getElementById('stage-mapping-section').classList.add('hidden');
   document.getElementById('field-mapping-section').classList.add('hidden');
@@ -494,12 +497,16 @@ function editClient(id) {
   document.getElementById('cf-id').value = id;
   document.getElementById('cf-title').textContent = 'Editar Cliente: ' + c.name;
   document.getElementById('cf-btn').textContent = 'Salvar Alteracoes';
-  document.getElementById('cf-token-hint').textContent = '(deixe vazio para manter o atual)';
+  document.getElementById('cf-token-hint').textContent = c.meta_access_token ? '(deixe vazio para manter o atual)' : '';
+  document.getElementById('cf-crm-hint').textContent = c.crm_credentials?.datacrazy_token ? '(salvo — deixe vazio para manter)' : '';
   document.getElementById('nc-name').value = c.name;
   document.getElementById('nc-pixel').value = c.pixel_id;
   document.getElementById('nc-token').value = '';
   document.getElementById('nc-token').placeholder = c.meta_access_token ? c.meta_access_token.slice(0,12) + '... (atual)' : 'Cole o token aqui';
   document.getElementById('nc-crm-token').value = '';
+  document.getElementById('nc-crm-token').placeholder = c.crm_credentials?.datacrazy_token
+    ? c.crm_credentials.datacrazy_token.slice(0,12) + '... (atual)'
+    : 'Token DataCrazy (opcional)';
   document.querySelectorAll('.nc-events').forEach(cb => cb.checked = c.events_enabled.includes(cb.value));
   document.getElementById('stage-mapping-section').classList.remove('hidden');
   document.getElementById('field-mapping-section').classList.remove('hidden');
@@ -517,25 +524,35 @@ async function saveClient() {
   const editId = document.getElementById('cf-id').value;
   const events = [...document.querySelectorAll('.nc-events:checked')].map(e => e.value);
 
+  // Validação campos obrigatórios
+  const name = document.getElementById('nc-name').value.trim();
+  const pixelId = document.getElementById('nc-pixel').value.trim();
+  if (!name) { toast('Nome é obrigatório', 'red'); return; }
+  if (!pixelId) { toast('Meta Pixel ID é obrigatório', 'red'); return; }
+  if (!editId && !document.getElementById('nc-token').value.trim()) {
+    toast('Meta Access Token é obrigatório para novo cliente', 'red'); return;
+  }
+
   if (editId) {
     // PATCH - update
     const payload = {
-      name: document.getElementById('nc-name').value,
-      pixel_id: document.getElementById('nc-pixel').value,
+      name: name,
+      pixel_id: pixelId,
       events_enabled: events,
     };
-    const token = document.getElementById('nc-token').value;
+    const token = document.getElementById('nc-token').value.trim();
     if (token) payload.meta_access_token = token;
-    const crmToken = document.getElementById('nc-crm-token').value;
+    const crmToken = document.getElementById('nc-crm-token').value.trim();
     const stageMap = getStageMapFromUI();
     const fieldMap = getFieldMapFromUI();
     const existingCreds = clients.find(c => c.id === editId)?.crm_credentials || {};
     const newCreds = { ...existingCreds };
     if (crmToken) newCreds.datacrazy_token = crmToken;
     if (stageMap) newCreds.stage_map = stageMap;
-    else delete newCreds.stage_map;
+    // Only delete stage_map if user explicitly loaded the section and cleared all mappings
+    else if (document.querySelectorAll('.stage-map-select').length > 0) delete newCreds.stage_map;
     if (fieldMap) newCreds.field_map = fieldMap;
-    else delete newCreds.field_map;
+    else if (document.querySelectorAll('.field-map-select').length > 0) delete newCreds.field_map;
     payload.crm_credentials = newCreds;
 
     try {
@@ -548,13 +565,13 @@ async function saveClient() {
   } else {
     // POST - create
     const payload = {
-      name: document.getElementById('nc-name').value,
-      pixel_id: document.getElementById('nc-pixel').value,
-      meta_access_token: document.getElementById('nc-token').value,
+      name: name,
+      pixel_id: pixelId,
+      meta_access_token: document.getElementById('nc-token').value.trim(),
       events_enabled: events,
       crm_credentials: {}
     };
-    const crmToken = document.getElementById('nc-crm-token').value;
+    const crmToken = document.getElementById('nc-crm-token').value.trim();
     if (crmToken) payload.crm_credentials = { datacrazy_token: crmToken };
 
     try {
