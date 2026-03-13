@@ -320,29 +320,38 @@ async def fire_event_from_crm(
             detail="Lead/Business has no email or phone — cannot match on Meta. Add contact data in the CRM first."
         )
 
-    # Disparar pra Meta
-    meta_result = await send_event(
-        pixel_id=client.pixel_id,
-        access_token=client.meta_access_token,
-        event_type=event_type,
-        user_data=user_data,
-        custom_data=custom_data or None,
-        use_test_mode=test_mode,
-    )
+    # Fan-out: disparar para todos os pixels ativos
+    active_pixels = client.get_active_pixels()
+    if not active_pixels:
+        raise HTTPException(status_code=422, detail="Client has no active pixels configured")
 
-    # Salvar log
-    event = Event(
-        client_id=client.id,
-        event_type=event_type,
-        event_data={"source": "crm_auto", "crm": crm_source, "test_mode": test_mode},
-        user_data=user_data,
-        meta_response=meta_result.get("response", {}),
-        status="sent" if meta_result["success"] else "error",
-        error_message=meta_result.get("error"),
-    )
-    db.add(event)
+    last_event = None
+    for pixel in active_pixels:
+        meta_result = await send_event(
+            pixel_id=pixel["pixel_id"],
+            access_token=pixel["access_token"],
+            event_type=event_type,
+            user_data=user_data,
+            custom_data=custom_data or None,
+            use_test_mode=test_mode,
+        )
+
+        event = Event(
+            client_id=client.id,
+            event_type=event_type,
+            event_data={"source": "crm_auto", "crm": crm_source, "test_mode": test_mode,
+                        "pixel_id": pixel["pixel_id"], "pixel_label": pixel.get("label", "")},
+            user_data=user_data,
+            meta_response=meta_result.get("response", {}),
+            status="sent" if meta_result["success"] else "error",
+            error_message=meta_result.get("error"),
+        )
+        db.add(event)
+        last_event = event
+
     await db.commit()
-    await db.refresh(event)
+    await db.refresh(last_event)
+    event = last_event
 
     return {
         "event_id": str(event.id),

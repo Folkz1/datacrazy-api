@@ -7,10 +7,19 @@ from pydantic import BaseModel, Field
 
 # === Clients ===
 
+class PixelEntry(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="ID único do pixel")
+    pixel_id: str = Field(..., description="Meta Pixel ID")
+    access_token: str = Field(..., description="Meta Access Token (CAPI)")
+    label: str = Field(default="Principal", description="Label (ex: B2B, Lançamento)")
+    active: bool = Field(default=True, description="Pixel ativo ou inativo")
+
+
 class ClientCreate(BaseModel):
     name: str = Field(..., description="Nome do cliente")
-    pixel_id: str = Field(..., description="Meta Pixel ID")
-    meta_access_token: str = Field(..., description="Meta Access Token (CAPI)")
+    pixel_id: str = Field("", description="Meta Pixel ID (legado, usar pixels[])")
+    meta_access_token: str = Field("", description="Meta Access Token (legado, usar pixels[])")
+    pixels: list[PixelEntry] = Field(default=[], description="Lista de pixels Meta (multi-pixel)")
     events_enabled: list[str] = Field(default=["Purchase", "Lead"], description="Tipos de evento habilitados")
     crm_credentials: dict = Field(default={}, description="Credenciais do CRM (ex: datacrazy_token)")
 
@@ -19,6 +28,7 @@ class ClientUpdate(BaseModel):
     name: str | None = None
     pixel_id: str | None = None
     meta_access_token: str | None = None
+    pixels: list[PixelEntry] | None = None
     events_enabled: list[str] | None = None
     crm_credentials: dict | None = None
     active: bool | None = None
@@ -29,6 +39,7 @@ class ClientResponse(BaseModel):
     name: str
     pixel_id: str
     meta_access_token: str
+    pixels: list[dict] = []
     events_enabled: list[str]
     active: bool
     api_key: str

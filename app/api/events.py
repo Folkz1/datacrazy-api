@@ -114,29 +114,37 @@ async def webhook_receiver(
     if data.get("content_name") or data.get("produto"):
         custom_data["content_name"] = data.get("content_name") or data.get("produto")
 
-    # Disparar pra Meta
-    meta_result = await send_event(
-        pixel_id=client.pixel_id,
-        access_token=client.meta_access_token,
-        event_type=meta_event,
-        user_data=user_data,
-        custom_data=custom_data or None,
-    )
+    # Fan-out: disparar para todos os pixels ativos
+    active_pixels = client.get_active_pixels()
+    if not active_pixels:
+        raise HTTPException(status_code=422, detail="Client has no active pixels configured")
 
-    # Salvar log
-    event = Event(
-        client_id=client.id,
-        event_type=meta_event,
-        event_data={"crm_event": body.event, "crm_data": body.data},
-        user_data=user_data,
-        meta_response=meta_result.get("response", {}),
-        status="sent" if meta_result["success"] else "error",
-        error_message=meta_result.get("error"),
-    )
-    db.add(event)
+    last_event = None
+    for pixel in active_pixels:
+        meta_result = await send_event(
+            pixel_id=pixel["pixel_id"],
+            access_token=pixel["access_token"],
+            event_type=meta_event,
+            user_data=user_data,
+            custom_data=custom_data or None,
+        )
+
+        event = Event(
+            client_id=client.id,
+            event_type=meta_event,
+            event_data={"crm_event": body.event, "crm_data": body.data,
+                        "pixel_id": pixel["pixel_id"], "pixel_label": pixel.get("label", "")},
+            user_data=user_data,
+            meta_response=meta_result.get("response", {}),
+            status="sent" if meta_result["success"] else "error",
+            error_message=meta_result.get("error"),
+        )
+        db.add(event)
+        last_event = event
+
     await db.commit()
-    await db.refresh(event)
-    return event
+    await db.refresh(last_event)
+    return last_event
 
 
 @router.post("/track", response_model=EventResponse)
@@ -149,29 +157,38 @@ async def track_event(
     """Disparo manual de evento — controle total dos parâmetros."""
     client = await _resolve_client(db, body.client_id, auth_client)
 
-    meta_result = await send_event(
-        pixel_id=client.pixel_id,
-        access_token=client.meta_access_token,
-        event_type=body.event_type,
-        user_data=body.user_data,
-        custom_data=body.custom_data,
-        event_source_url=body.event_source_url,
-        use_test_mode=body.test_mode,
-    )
+    active_pixels = client.get_active_pixels()
+    if not active_pixels:
+        raise HTTPException(status_code=422, detail="Client has no active pixels configured")
 
-    event = Event(
-        client_id=client.id,
-        event_type=body.event_type,
-        event_data={"source": "manual", "test_mode": body.test_mode},
-        user_data=body.user_data,
-        meta_response=meta_result.get("response", {}),
-        status="sent" if meta_result["success"] else "error",
-        error_message=meta_result.get("error"),
-    )
-    db.add(event)
+    last_event = None
+    for pixel in active_pixels:
+        meta_result = await send_event(
+            pixel_id=pixel["pixel_id"],
+            access_token=pixel["access_token"],
+            event_type=body.event_type,
+            user_data=body.user_data,
+            custom_data=body.custom_data,
+            event_source_url=body.event_source_url,
+            use_test_mode=body.test_mode,
+        )
+
+        event = Event(
+            client_id=client.id,
+            event_type=body.event_type,
+            event_data={"source": "manual", "test_mode": body.test_mode,
+                        "pixel_id": pixel["pixel_id"], "pixel_label": pixel.get("label", "")},
+            user_data=body.user_data,
+            meta_response=meta_result.get("response", {}),
+            status="sent" if meta_result["success"] else "error",
+            error_message=meta_result.get("error"),
+        )
+        db.add(event)
+        last_event = event
+
     await db.commit()
-    await db.refresh(event)
-    return event
+    await db.refresh(last_event)
+    return last_event
 
 
 @router.get("", response_model=list[EventResponse])

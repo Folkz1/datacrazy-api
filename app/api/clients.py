@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.auth import require_master_key
 from app.core.database import get_db
@@ -25,10 +26,26 @@ async def create_client(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(require_master_key),
 ):
+    # Build pixels array from either pixels[] or legacy pixel_id/meta_access_token
+    pixels = [p.model_dump() for p in body.pixels] if body.pixels else []
+    pixel_id = body.pixel_id
+    meta_access_token = body.meta_access_token
+
+    # If no pixels[] but legacy fields provided, create pixel from them
+    if not pixels and pixel_id and meta_access_token:
+        pixels = [{"id": str(uuid.uuid4()), "pixel_id": pixel_id,
+                   "access_token": meta_access_token, "label": "Principal", "active": True}]
+
+    # Keep legacy fields synced with first pixel for backward compat
+    if pixels and not pixel_id:
+        pixel_id = pixels[0]["pixel_id"]
+        meta_access_token = pixels[0]["access_token"]
+
     client = Client(
         name=body.name,
-        pixel_id=body.pixel_id,
-        meta_access_token=body.meta_access_token,
+        pixel_id=pixel_id or "",
+        meta_access_token=meta_access_token or "",
+        pixels=pixels,
         events_enabled=body.events_enabled,
         crm_credentials=body.crm_credentials,
         api_key=generate_api_key(),
@@ -73,7 +90,21 @@ async def update_client(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    for field, value in body.model_dump(exclude_unset=True).items():
+    update_data = body.model_dump(exclude_unset=True)
+
+    # Handle pixels update — serialize PixelEntry objects and sync legacy fields
+    if "pixels" in update_data and update_data["pixels"] is not None:
+        pixels = update_data["pixels"]
+        client.pixels = pixels
+        flag_modified(client, "pixels")
+        # Sync legacy fields with first active pixel
+        active = [p for p in pixels if p.get("active", True)]
+        if active:
+            client.pixel_id = active[0]["pixel_id"]
+            client.meta_access_token = active[0]["access_token"]
+        del update_data["pixels"]
+
+    for field, value in update_data.items():
         setattr(client, field, value)
 
     await db.commit()

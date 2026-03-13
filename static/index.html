@@ -95,18 +95,22 @@
     <h3 id="cf-title" class="font-semibold mb-3">Cadastrar Cliente</h3>
     <input id="cf-id" type="hidden">
     <div class="grid grid-cols-2 gap-3">
-      <div>
+      <div class="col-span-2">
         <label class="text-xs text-gray-400">Nome *</label>
         <input id="nc-name" type="text" class="w-full" placeholder="Ex: Pacific Surf School">
       </div>
-      <div>
-        <label class="text-xs text-gray-400">Meta Pixel ID *</label>
-        <input id="nc-pixel" type="text" class="w-full" placeholder="Ex: 230237130670283">
+    </div>
+
+    <!-- Multi-Pixel Section -->
+    <div class="mt-3">
+      <div class="flex justify-between items-center mb-2">
+        <h4 class="text-sm font-semibold text-gray-300">Meta Pixels</h4>
+        <button type="button" onclick="addPixelRow()" class="btn btn-ghost text-xs">+ Adicionar Pixel</button>
       </div>
-      <div class="col-span-2">
-        <label class="text-xs text-gray-400">Meta Access Token * <span id="cf-token-hint" class="text-gray-600"></span></label>
-        <input id="nc-token" type="text" class="w-full" placeholder="EAATvcmlRNpc...">
-      </div>
+      <div id="pixels-list" class="space-y-2"></div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3 mt-3">
       <div>
         <label class="text-xs text-gray-400">Eventos Habilitados</label>
         <div class="flex flex-wrap gap-2 mt-1">
@@ -438,12 +442,14 @@ async function loadClients() {
     const body = document.getElementById('clients-body');
     body.innerHTML = '';
     for (const c of clients) {
-      const tokenMask = c.meta_access_token ? c.meta_access_token.slice(0,8) + '...' + c.meta_access_token.slice(-6) : 'N/A';
+      const pxCount = (c.pixels && c.pixels.length) || (c.pixel_id ? 1 : 0);
+      const pxActive = c.pixels ? c.pixels.filter(p => p.active !== false).length : (c.pixel_id ? 1 : 0);
+      const pxLabel = pxCount > 1 ? `${pxActive}/${pxCount} pixels` : esc(c.pixel_id || 'N/A');
       const tokenOk = c.meta_access_token && c.meta_access_token.startsWith('EAA') && c.meta_access_token.length > 20;
       body.innerHTML += `<tr>
         <td class="font-medium">${esc(c.name)}</td>
-        <td class="font-mono text-xs">${esc(c.pixel_id)}</td>
-        <td><span class="text-xs ${tokenOk ? 'text-green-400' : 'text-red-400'}">${esc(tokenMask)}</span></td>
+        <td class="font-mono text-xs">${pxLabel}</td>
+        <td><span class="text-xs ${tokenOk ? 'text-green-400' : 'text-red-400'}">${pxCount} pixel${pxCount > 1 ? 's' : ''}</span></td>
         <td><code class="text-xs bg-surface px-2 py-1 rounded cursor-pointer" onclick="copyKey('${esc(c.api_key)}')">${c.api_key.slice(0,12)}... <span class="text-gray-500">copiar</span></code></td>
         <td>${c.events_enabled.map(e=>'<span class="badge badge-blue mr-1">'+e+'</span>').join('')}</td>
         <td>${c.active ? '<span class="badge badge-green">Ativo</span>' : '<span class="badge badge-red">Inativo</span>'}</td>
@@ -473,19 +479,54 @@ function populateClientSelects() {
   }
 }
 
+// --- Multi-Pixel Management ---
+function addPixelRow(data = {}) {
+  const list = document.getElementById('pixels-list');
+  const id = data.id || crypto.randomUUID();
+  const row = document.createElement('div');
+  row.className = 'flex items-center gap-2 bg-surface rounded-lg px-3 py-2 pixel-row';
+  row.dataset.pixelId = id;
+  row.innerHTML = `
+    <input type="text" class="px-label text-xs w-24" placeholder="Label (ex: B2B)" value="${esc(data.label || 'Principal')}">
+    <input type="text" class="px-pixel-id flex-1" placeholder="Pixel ID *" value="${esc(data.pixel_id || '')}">
+    <input type="text" class="px-token flex-1" placeholder="Access Token *" value="${esc(data.access_token || '')}">
+    <label class="flex items-center gap-1 text-xs shrink-0">
+      <input type="checkbox" class="px-active" ${data.active !== false ? 'checked' : ''}> Ativo
+    </label>
+    <button type="button" onclick="this.closest('.pixel-row').remove()" class="text-red-400 text-xs hover:underline shrink-0">X</button>`;
+  list.appendChild(row);
+}
+
+function getPixelsFromUI() {
+  const pixels = [];
+  document.querySelectorAll('.pixel-row').forEach(row => {
+    const pixelId = row.querySelector('.px-pixel-id').value.trim();
+    const token = row.querySelector('.px-token').value.trim();
+    if (pixelId && token) {
+      pixels.push({
+        id: row.dataset.pixelId,
+        pixel_id: pixelId,
+        access_token: token,
+        label: row.querySelector('.px-label').value.trim() || 'Principal',
+        active: row.querySelector('.px-active').checked,
+      });
+    }
+  });
+  return pixels;
+}
+
 function showNewClient() {
   document.getElementById('cf-id').value = '';
   document.getElementById('cf-title').textContent = 'Cadastrar Cliente';
   document.getElementById('cf-btn').textContent = 'Criar Cliente';
-  document.getElementById('cf-token-hint').textContent = '';
   document.getElementById('cf-crm-hint').textContent = '';
   document.getElementById('nc-name').value = '';
-  document.getElementById('nc-pixel').value = '';
-  document.getElementById('nc-token').value = '';
-  document.getElementById('nc-token').placeholder = 'EAATvcmlRNpc...';
   document.getElementById('nc-crm-token').value = '';
   document.getElementById('nc-crm-token').placeholder = 'Token DataCrazy (opcional)';
   document.querySelectorAll('.nc-events').forEach(cb => cb.checked = ['Purchase','Lead'].includes(cb.value));
+  // Reset pixels — start with one empty row
+  document.getElementById('pixels-list').innerHTML = '';
+  addPixelRow();
   document.getElementById('stage-mapping-section').classList.add('hidden');
   document.getElementById('field-mapping-section').classList.add('hidden');
   document.getElementById('client-form').classList.remove('hidden');
@@ -497,23 +538,23 @@ function editClient(id) {
   document.getElementById('cf-id').value = id;
   document.getElementById('cf-title').textContent = 'Editar Cliente: ' + c.name;
   document.getElementById('cf-btn').textContent = 'Salvar Alteracoes';
-  document.getElementById('cf-token-hint').textContent = c.meta_access_token ? '(limpe e cole novo para alterar)' : '';
   document.getElementById('cf-crm-hint').textContent = c.crm_credentials?.datacrazy_token ? '(limpe e cole novo para alterar)' : '';
   document.getElementById('nc-name').value = c.name;
-  document.getElementById('nc-pixel').value = c.pixel_id;
-  // Show masked token as VALUE (white text) not placeholder (gray text)
-  document.getElementById('nc-token').value = c.meta_access_token || '';
-  document.getElementById('nc-token').placeholder = 'Cole o token aqui';
   document.getElementById('nc-crm-token').value = c.crm_credentials?.datacrazy_token || '';
   document.getElementById('nc-crm-token').placeholder = 'Token DataCrazy (opcional)';
   document.querySelectorAll('.nc-events').forEach(cb => cb.checked = c.events_enabled.includes(cb.value));
+
+  // Populate pixels
+  document.getElementById('pixels-list').innerHTML = '';
+  const pixels = c.pixels && c.pixels.length > 0 ? c.pixels
+    : [{id: crypto.randomUUID(), pixel_id: c.pixel_id || '', access_token: c.meta_access_token || '', label: 'Principal', active: true}];
+  pixels.forEach(p => addPixelRow(p));
+
   document.getElementById('stage-mapping-section').classList.remove('hidden');
   document.getElementById('field-mapping-section').classList.remove('hidden');
   document.getElementById('client-form').classList.remove('hidden');
-  // Invalidate cache so it loads data for THIS client's CRM token
   cachedPipelineStages = null;
   cachedLeadFields = null;
-  // Auto-load stages and fields if client has CRM configured
   if (c.crm_credentials?.stage_map || c.crm_credentials?.datacrazy_token) {
     loadStagesForMapping();
   }
@@ -528,22 +569,19 @@ async function saveClient() {
 
   // Validação campos obrigatórios
   const name = document.getElementById('nc-name').value.trim();
-  const pixelId = document.getElementById('nc-pixel').value.trim();
-  if (!name) { toast('Nome é obrigatório', 'red'); return; }
-  if (!pixelId) { toast('Meta Pixel ID é obrigatório', 'red'); return; }
-  if (!editId && !document.getElementById('nc-token').value.trim()) {
-    toast('Meta Access Token é obrigatório para novo cliente', 'red'); return;
-  }
+  const pixels = getPixelsFromUI();
+  if (!name) { toast('Nome e obrigatorio', 'red'); return; }
+  if (!pixels.length) { toast('Adicione ao menos um pixel com ID e Token', 'red'); return; }
 
   if (editId) {
     // PATCH - update
     const payload = {
       name: name,
-      pixel_id: pixelId,
+      pixels: pixels,
+      pixel_id: pixels[0]?.pixel_id || '',
+      meta_access_token: pixels[0]?.access_token || '',
       events_enabled: events,
     };
-    const token = document.getElementById('nc-token').value.trim();
-    if (token) payload.meta_access_token = token;
     const crmToken = document.getElementById('nc-crm-token').value.trim();
     const stageMap = getStageMapFromUI();
     const fieldMap = getFieldMapFromUI();
@@ -551,7 +589,6 @@ async function saveClient() {
     const newCreds = { ...existingCreds };
     if (crmToken) newCreds.datacrazy_token = crmToken;
     if (stageMap) newCreds.stage_map = stageMap;
-    // Only delete stage_map if user explicitly loaded the section and cleared all mappings
     else if (document.querySelectorAll('.stage-map-select').length > 0) delete newCreds.stage_map;
     if (fieldMap) newCreds.field_map = fieldMap;
     else if (document.querySelectorAll('.field-map-select').length > 0) delete newCreds.field_map;
@@ -568,8 +605,9 @@ async function saveClient() {
     // POST - create
     const payload = {
       name: name,
-      pixel_id: pixelId,
-      meta_access_token: document.getElementById('nc-token').value.trim(),
+      pixels: pixels,
+      pixel_id: pixels[0]?.pixel_id || '',
+      meta_access_token: pixels[0]?.access_token || '',
       events_enabled: events,
       crm_credentials: {}
     };
