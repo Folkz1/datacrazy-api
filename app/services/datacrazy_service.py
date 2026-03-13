@@ -38,10 +38,20 @@ class DataCrazyClient:
             resp.raise_for_status()
             return self._extract_data(resp.json())
 
-    async def list_businesses(self, stage_ids: list[str] | None = None, limit: int = 100) -> list:
-        params = {"limit": limit}
+    async def list_businesses(
+        self,
+        stage_ids: list[str] | None = None,
+        limit: int = 100,
+        last_moved_after: str | None = None,
+        status: str | None = None,
+    ) -> list:
+        params: dict = {"take": limit}
         if stage_ids:
-            params["filter"] = ",".join(stage_ids)
+            params["filter[stageId]"] = ",".join(stage_ids)
+        if last_moved_after:
+            params["filter[lastMovedAfter]"] = last_moved_after
+        if status:
+            params["filter[status]"] = status
         async with httpx.AsyncClient(timeout=30, headers=self.headers) as client:
             resp = await client.get(f"{self.base_url}/api/v1/businesses", params=params)
             resp.raise_for_status()

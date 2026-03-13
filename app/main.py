@@ -18,11 +18,14 @@ from app.core.database import init_db
 from app.core.config import settings
 from app.api import clients, events, reports, crm
 from app.services.datacrazy_service import DataCrazyClient
+from app.services.crm_sync import start_cron, run_sync_all
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    if settings.datacrazy_api_token:
+        start_cron()
     yield
 
 
@@ -64,8 +67,16 @@ async def health():
     dc_status = await dc.health_check()
     return {
         "status": "ok",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "datacrazy_integration": dc_status,
+        "auto_sync": "active" if settings.datacrazy_api_token else "disabled",
         "meta_test_mode": bool(settings.meta_test_event_code),
         "ai_reports": bool(settings.anthropic_api_key),
     }
+
+
+@app.post("/api/sync", tags=["System"])
+async def manual_sync():
+    """Força sync manual — busca mudanças no CRM e dispara eventos Meta."""
+    result = await run_sync_all()
+    return result
