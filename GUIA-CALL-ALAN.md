@@ -214,36 +214,110 @@ Match rate sobe de ~50% para ~90%
 
 ---
 
-## Roteiro da Call (10 minutos)
+## Auto-Sync: CRM → Meta (Automático)
+
+O sistema faz **polling automático a cada 5 minutos** no CRM DataCrazy. Quando um negócio muda de stage, o evento Meta é disparado automaticamente.
+
+### Mapeamento de Stages → Eventos Meta
+
+| Pipeline | Stage | Evento Meta |
+|----------|-------|-------------|
+| Vendas B2B | Qualificação | Lead |
+| Vendas B2B | Proposta | Lead |
+| Vendas B2B | Ganho | **Purchase** |
+| Renovação | Em contato | Lead |
+| Renovação | Proposta de renovação | Lead |
+| Renovação | Renovado | **Purchase** |
+| Shopping Barão | Novo Contato | Lead |
+| Arqnove | Novo Contato, Em discussão | Lead |
+| Dr. Gustavo | Novo | Lead |
+| Lype Navegantes | Novo | Lead |
+| Lype Balneário | Novo | Lead |
+
+**Como funciona:**
+1. A cada 5 minutos, a API consulta o CRM DataCrazy
+2. Busca negócios com `lastMovedAfter` (só os que mudaram desde a última checagem)
+3. Para cada negócio, resolve o stage → tipo de evento Meta
+4. Extrai dados do lead (nome, telefone, email) automaticamente
+5. Dispara o evento via Meta CAPI com SHA-256
+6. Registra no histórico do dashboard
+
+**Sync manual**: `POST /api/sync` (para forçar sem esperar o cron)
+
+**Mapeamento customizável**: Cada cliente pode ter seu próprio mapa de stages no campo `crm_credentials.stage_map`.
+
+---
+
+## Como Cadastrar Cada Cliente do Alan
+
+O Alan tem 7 pipelines = potencialmente 7 clientes diferentes. Para cada um:
+
+1. Aba **Clientes** → **+ Novo Cliente**
+2. **Nome**: Nome do cliente (ex: "Shopping Barão", "Arqnove")
+3. **Meta Pixel ID**: Número do pixel Meta desse cliente
+4. **Meta Access Token**: Token CAPI do Business Manager desse cliente
+5. **Eventos Habilitados**: Purchase + Lead (mínimo)
+6. **Token DataCrazy CRM**: Opcional — se cada cliente tiver token separado
+7. Clicar **Criar Cliente** → API Key gerada automaticamente
+
+Se todos os clientes do Alan usam o **mesmo Pixel Meta**, pode ser 1 cadastro só com todos os eventos habilitados.
+
+---
+
+## Dois Tipos de Conversão (WhatsApp vs Formulário)
+
+### Conversão WhatsApp
+```
+Lead no WhatsApp → CRM DataCrazy registra → Deal muda de stage
+    ↓
+Auto-sync detecta (a cada 5min) → dispara Purchase/Lead pro Meta CAPI
+```
+
+### Conversão Formulário
+```
+Lead preenche formulário no site → Pixel client-side já dispara (browser)
+    ↓
+Backend/N8N manda webhook → POST /api/events/webhook
+    ↓
+Gateway dispara mesmo evento via CAPI (server-side)
+    ↓
+Meta recebe AMBOS (client + server) → deduplica → match rate ~90%
+```
+
+---
+
+## Roteiro da Call (12 minutos)
 
 ### 1. Mostrar Dashboard (2 min)
 - Abrir https://datacrazy-api.jz9bd8.easypanel.host/
-- Conectar com master key
-- Mostrar métricas: X eventos enviados, taxa de sucesso
+- Conectar com master key `dc-master-alan-2026`
+- Mostrar métricas: eventos enviados, taxa de sucesso
 - Mostrar lista de clientes com token validado (verde)
 
-### 2. Criar Cliente do Alan (3 min)
+### 2. Mostrar CRM Integrado (3 min)
+- Aba **CRM DataCrazy** → mostrar os 7 pipelines do Alan com stages
+- Mostrar os 123 leads reais do CRM dele
+- Mostrar negócios com valores e status
+- Clicar **Disparar Evento** num lead → mostrar resultado verde
+
+### 3. Explicar Auto-Sync (2 min)
+- "O sistema checa o CRM a cada 5 minutos automaticamente"
+- "Quando você move um deal no CRM, o evento Meta dispara sozinho"
+- Mostrar mapeamento: Qualificação→Lead, Ganho→Purchase
+- "Funciona para WhatsApp e formulário"
+
+### 4. Criar Cliente Real (3 min)
 - Aba Clientes → + Novo Cliente
 - Nome: nome do cliente real do Alan
-- Pixel ID: pedir pro Alan (ou usar o demo)
+- Pixel ID: pedir pro Alan
 - Meta Access Token: pedir pro Alan colar o token
-- Selecionar eventos: Purchase + Lead no mínimo
 - Criar → API Key gerada automaticamente
 
-### 3. Disparar Evento Teste (3 min)
-- Aba "Testar Disparo"
-- Selecionar o cliente recém criado
-- Tipo: Lead
-- Preencher email e telefone de teste
-- Modo Teste: marcado
-- Clicar Disparar
-- Mostrar resultado verde: `events_received: 1`
-- Abrir Meta Events Manager → Test Events → mostrar evento chegando
-
-### 4. Explicar Integração CRM (2 min)
-- Mostrar exemplo de webhook
-- Explicar: "No DataCrazy, quando um deal muda de status, vocês fazem um POST pra essa URL com os dados. A API traduz e manda pra Meta automaticamente."
-- Mostrar Swagger docs: toda a API documentada
+### 5. Próximos Passos (2 min)
+- Relatórios automáticos via IA (Módulo 2)
+- Mapeamento customizado por pipeline
+- Dashboard com gráficos de performance
+- "Estrutura pronta para escalar — cada novo cliente é 2 minutos"
 
 ---
 
@@ -277,15 +351,38 @@ Na produção, cada cliente do Alan recebe sua própria API Key. O CRM usa essa 
 ```
 [Site/App]  →  Pixel JS (client-side)  →  Meta Pixel
      ↓
-[CRM DataCrazy]  →  Webhook  →  DataCrazy Gateway API  →  Meta CAPI (server-side)
-                                       ↓
-                                  PostgreSQL (log de eventos)
-                                       ↓
-                                  Dashboard (métricas)
+[CRM DataCrazy]  ←  Auto-Sync (5min)  ←  DataCrazy Gateway API  →  Meta CAPI (server-side)
+     ↓                                           ↓
+[N8N / Webhook]  →  POST /api/events/webhook  →  ↑
+                                                  ↓
+                                            PostgreSQL (log)
+                                                  ↓
+                                            Dashboard (métricas + CRM)
 ```
 
 - **FastAPI** (Python) — performático, async
 - **PostgreSQL** — log de todos os eventos
 - **Meta Graph API v21.0** — versão mais recente
 - **SHA-256** — hashing automático de PII
+- **Auto-Sync** — polling CRM a cada 5 minutos
 - **Deploy**: EasyPanel (Docker) com HTTPS automático
+
+---
+
+## Proposta vs Entregue
+
+| Item da Proposta | Status | Detalhe |
+|-----------------|--------|---------|
+| Tela web cadastrar clientes | **ENTREGUE** | Dashboard multi-tenant com CRUD |
+| Conectar pixels/tokens por cliente | **ENTREGUE** | Pixel ID + Meta Token + Eventos por cliente |
+| Disparar eventos Meta CAPI | **ENTREGUE** | 3 formas: dashboard, API, webhook |
+| Integração automática CRM | **ENTREGUE** | Auto-sync polling 5min + mapeamento stages |
+| Tradução CRM → Meta | **ENTREGUE** | 14 mapeamentos (deal_won→Purchase, etc.) |
+| Hashing SHA-256 (LGPD) | **ENTREGUE** | Automático em todos os dados pessoais |
+| WhatsApp + Formulário | **ENTREGUE** | Dois fluxos separados documentados |
+| Visualizar dados CRM | **ENTREGUE** | Aba CRM: pipelines, leads, negócios |
+| Histórico de eventos | **ENTREGUE** | Filtros por cliente, status, tipo |
+| API documentada | **ENTREGUE** | Swagger (/docs) + ReDoc (/redoc) |
+| Estrutura replicável | **ENTREGUE** | Cada cliente = 2 min para cadastrar |
+| Relatórios IA (Módulo 2) | **PENDENTE** | Endpoint pronto, falta ativar Claude |
+| Dashboard gráficos (Módulo 2) | **PENDENTE** | Métricas existem, falta visual |
