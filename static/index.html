@@ -60,6 +60,7 @@
   <div class="tab" data-tab="clients" onclick="switchTab('clients')">Clientes</div>
   <div class="tab" data-tab="events" onclick="switchTab('events')">Eventos</div>
   <div class="tab" data-tab="test" onclick="switchTab('test')">Testar Disparo</div>
+  <div class="tab" data-tab="crm" onclick="switchTab('crm')">CRM DataCrazy</div>
 </nav>
 
 <!-- Dashboard Tab -->
@@ -233,6 +234,90 @@ Headers: { "X-API-Key": "dc_xxxxx" }
     "name": "Joao Silva"
   }
 }</pre>
+  </div>
+</main>
+
+<!-- CRM DataCrazy Tab -->
+<main id="tab-crm" class="p-6 fade-in hidden">
+  <div class="grid grid-cols-3 gap-4 mb-6">
+    <div class="card metric"><div class="value" id="crm-pipelines">-</div><div class="label">Pipelines</div></div>
+    <div class="card metric"><div class="value" id="crm-leads">-</div><div class="label">Leads</div></div>
+    <div class="card metric"><div class="value" id="crm-deals">-</div><div class="label">Negócios</div></div>
+  </div>
+
+  <!-- Pipelines -->
+  <div class="card mb-4">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-semibold">Pipelines & Stages</h3>
+      <button onclick="loadCRM()" class="btn btn-ghost text-xs">Atualizar</button>
+    </div>
+    <div id="crm-pipelines-list" class="space-y-3">
+      <p class="text-gray-500 text-sm">Conecte para ver os pipelines do CRM</p>
+    </div>
+  </div>
+
+  <!-- Leads -->
+  <div class="card mb-4">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-semibold">Leads do CRM</h3>
+      <div class="flex gap-2">
+        <input id="crm-lead-search" type="text" class="text-xs w-48" placeholder="Buscar lead..." onkeyup="if(event.key==='Enter')loadLeads()">
+        <button onclick="loadLeads()" class="btn btn-ghost text-xs">Buscar</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Tags</th><th>Ações</th></tr></thead>
+      <tbody id="crm-leads-body"></tbody>
+    </table>
+    <p id="crm-leads-empty" class="text-gray-500 text-center py-4 text-sm hidden">Nenhum lead encontrado</p>
+  </div>
+
+  <!-- Negócios por Pipeline -->
+  <div class="card mb-4">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-semibold">Negócios (Deals)</h3>
+      <div class="flex gap-2 items-center">
+        <select id="crm-biz-pipeline" class="text-xs w-48" onchange="loadBusinesses()">
+          <option value="">Todos os pipelines</option>
+        </select>
+        <button onclick="loadBusinesses()" class="btn btn-ghost text-xs">Atualizar</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Código</th><th>Lead</th><th>Email</th><th>Telefone</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead>
+      <tbody id="crm-biz-body"></tbody>
+    </table>
+    <p id="crm-biz-empty" class="text-gray-500 text-center py-4 text-sm hidden">Nenhum negócio encontrado</p>
+  </div>
+
+  <!-- Fire Event from CRM -->
+  <div id="crm-fire-modal" class="card mb-4 hidden">
+    <h3 class="font-semibold mb-3">Disparar Evento Meta a partir do CRM</h3>
+    <div class="grid grid-cols-2 gap-3 mb-3">
+      <div>
+        <label class="text-xs text-gray-400">Cliente (nosso sistema) *</label>
+        <select id="crm-fire-client" class="w-full text-sm"></select>
+      </div>
+      <div>
+        <label class="text-xs text-gray-400">Tipo de Evento *</label>
+        <select id="crm-fire-type" class="w-full text-sm">
+          <option>Lead</option><option>Purchase</option><option>ViewContent</option>
+          <option>AddToCart</option><option>InitiateCheckout</option><option>CompleteRegistration</option>
+        </select>
+      </div>
+    </div>
+    <div class="bg-surface rounded-lg p-3 mb-3">
+      <p class="text-xs text-gray-400 mb-1">Dados extraídos do CRM:</p>
+      <pre id="crm-fire-preview" class="text-xs font-mono text-gray-300"></pre>
+    </div>
+    <div class="flex items-center gap-3">
+      <label class="flex items-center gap-2 text-sm">
+        <input id="crm-fire-test" type="checkbox" checked> Modo Teste
+      </label>
+      <button onclick="executeCrmFire()" id="btn-crm-fire" class="btn btn-primary text-sm">Disparar Evento</button>
+      <button onclick="document.getElementById('crm-fire-modal').classList.add('hidden')" class="btn btn-ghost text-sm">Cancelar</button>
+    </div>
+    <pre id="crm-fire-result" class="bg-surface rounded-lg p-3 mt-3 text-xs font-mono hidden"></pre>
   </div>
 </main>
 
@@ -540,6 +625,7 @@ function switchTab(name) {
   document.getElementById('tab-' + name).classList.remove('hidden');
   document.querySelector(`[data-tab="${name}"]`).classList.add('tab-active');
   if (name === 'events') loadEvents();
+  if (name === 'crm') loadCRM();
 }
 
 // --- Utils ---
@@ -553,13 +639,177 @@ function toast(msg, color = 'blue') {
   setTimeout(() => t.remove(), 4000);
 }
 
+// --- CRM DataCrazy ---
+let crmPipelines = [];
+let crmFireData = {};
+
+async function loadCRM() {
+  try {
+    const pipelines = await api('/api/crm/pipelines');
+    crmPipelines = pipelines;
+    document.getElementById('crm-pipelines').textContent = pipelines.length;
+
+    const pipeDiv = document.getElementById('crm-pipelines-list');
+    pipeDiv.innerHTML = '';
+    const pipeSelect = document.getElementById('crm-biz-pipeline');
+    pipeSelect.innerHTML = '<option value="">Todos os pipelines</option>';
+
+    for (const p of pipelines) {
+      pipeSelect.innerHTML += `<option value="${p.id}">${esc(p.name)} (${p.stages_count} stages)</option>`;
+      const stagesHtml = p.stages.map(s =>
+        `<span class="badge badge-blue mr-1 mb-1">${esc(s.name)}</span>`
+      ).join('');
+      pipeDiv.innerHTML += `<div class="bg-surface rounded-lg p-3">
+        <div class="flex justify-between items-center mb-2">
+          <span class="font-medium text-sm">${esc(p.name)}</span>
+          <span class="text-xs text-gray-500">${p.stages_count} stages</span>
+        </div>
+        <div class="flex flex-wrap">${stagesHtml}</div>
+      </div>`;
+    }
+
+    loadLeads();
+    loadBusinesses();
+  } catch (e) {
+    toast('Erro CRM: ' + e.message, 'red');
+    console.error('CRM:', e);
+  }
+}
+
+async function loadLeads() {
+  try {
+    const search = document.getElementById('crm-lead-search').value;
+    let url = '/api/crm/leads?limit=30';
+    if (search) url += '&search=' + encodeURIComponent(search);
+    const leads = await api(url);
+    document.getElementById('crm-leads').textContent = leads.length;
+    const body = document.getElementById('crm-leads-body');
+    const empty = document.getElementById('crm-leads-empty');
+    body.innerHTML = '';
+
+    if (!leads.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+
+    for (const l of leads) {
+      const tags = (l.tags || []).map(t => `<span class="badge badge-yellow text-[10px]">${esc(t)}</span>`).join(' ');
+      const hasContact = l.email || l.phone;
+      body.innerHTML += `<tr>
+        <td class="font-medium text-sm">${esc(l.name)}</td>
+        <td class="text-xs">${esc(l.email || '-')}</td>
+        <td class="text-xs font-mono">${esc(l.phone || '-')}</td>
+        <td>${tags || '<span class="text-gray-500 text-xs">-</span>'}</td>
+        <td>${hasContact
+          ? `<button onclick="prepareCrmFire('lead','${l.id}','${esc(l.name)}','${esc(l.email||'')}','${esc(l.phone||'')}')" class="text-green-400 text-xs hover:underline">Disparar Evento</button>`
+          : '<span class="text-gray-500 text-xs">Sem contato</span>'}</td>
+      </tr>`;
+    }
+  } catch (e) { toast('Erro leads: ' + e.message, 'red'); }
+}
+
+async function loadBusinesses() {
+  try {
+    const pipeId = document.getElementById('crm-biz-pipeline').value;
+    let url = '/api/crm/businesses?limit=30';
+    if (pipeId) url += '&pipeline_id=' + pipeId;
+    const biz = await api(url);
+    document.getElementById('crm-deals').textContent = biz.length;
+    const body = document.getElementById('crm-biz-body');
+    const empty = document.getElementById('crm-biz-empty');
+    body.innerHTML = '';
+
+    if (!biz.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+
+    for (const b of biz) {
+      const val = b.total ? 'R$ ' + parseFloat(b.total).toLocaleString('pt-BR', {minimumFractionDigits:2}) : '-';
+      const statusCls = b.status === 'won' ? 'badge-green' : b.status === 'lost' ? 'badge-red' : 'badge-yellow';
+      const hasContact = b.lead_email || b.lead_phone;
+      body.innerHTML += `<tr>
+        <td class="font-mono text-xs">${esc(b.code || b.id.toString().slice(0,8))}</td>
+        <td class="text-sm">${esc(b.lead_name || '-')}</td>
+        <td class="text-xs">${esc(b.lead_email || '-')}</td>
+        <td class="text-xs font-mono">${esc(b.lead_phone || '-')}</td>
+        <td class="font-medium">${val}</td>
+        <td><span class="badge ${statusCls}">${esc(b.status || 'open')}</span></td>
+        <td>${hasContact
+          ? `<button onclick="prepareCrmFire('business','${b.id}','${esc(b.lead_name||'')}','${esc(b.lead_email||'')}','${esc(b.lead_phone||'')}')" class="text-green-400 text-xs hover:underline">Disparar</button>`
+          : '<span class="text-gray-500 text-xs">Sem contato</span>'}</td>
+      </tr>`;
+    }
+  } catch (e) { toast('Erro businesses: ' + e.message, 'red'); }
+}
+
+function prepareCrmFire(type, id, name, email, phone) {
+  crmFireData = { type, id, name, email, phone };
+  const modal = document.getElementById('crm-fire-modal');
+  modal.classList.remove('hidden');
+
+  // Populate client select
+  const sel = document.getElementById('crm-fire-client');
+  sel.innerHTML = '';
+  for (const c of clients) {
+    sel.innerHTML += `<option value="${c.id}">${esc(c.name)}</option>`;
+  }
+
+  // Auto-select event type based on source
+  document.getElementById('crm-fire-type').value = type === 'business' ? 'Purchase' : 'Lead';
+
+  // Preview
+  document.getElementById('crm-fire-preview').textContent = JSON.stringify({
+    source: type,
+    crm_id: id,
+    name: name,
+    email: email || '(não disponível)',
+    phone: phone || '(não disponível)',
+  }, null, 2);
+
+  document.getElementById('crm-fire-result').classList.add('hidden');
+  modal.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function executeCrmFire() {
+  const btn = document.getElementById('btn-crm-fire');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+
+  const clientId = document.getElementById('crm-fire-client').value;
+  const eventType = document.getElementById('crm-fire-type').value;
+  const testMode = document.getElementById('crm-fire-test').checked;
+
+  let url = `/api/crm/fire-event?client_id=${clientId}&event_type=${eventType}&test_mode=${testMode}`;
+  if (crmFireData.type === 'lead') url += `&lead_id=${crmFireData.id}`;
+  else url += `&business_id=${crmFireData.id}`;
+
+  const result = document.getElementById('crm-fire-result');
+  try {
+    const r = await api(url, { method: 'POST' });
+    const ok = r.status === 'sent';
+    result.textContent = (ok ? '✅' : '❌') + ' RESULTADO\n\n' + JSON.stringify(r, null, 2);
+    result.className = `bg-surface rounded-lg p-3 mt-3 text-xs font-mono ${ok ? 'text-green-300' : 'text-red-300'}`;
+    result.classList.remove('hidden');
+    toast(ok ? 'Evento CRM disparado com sucesso!' : 'Erro no disparo', ok ? 'green' : 'red');
+    loadDashboard();
+  } catch (e) {
+    result.textContent = '❌ ERRO\n\n' + e.message;
+    result.className = 'bg-surface rounded-lg p-3 mt-3 text-xs font-mono text-red-300';
+    result.classList.remove('hidden');
+    toast('Erro: ' + e.message, 'red');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Disparar Evento';
+}
+
 // Auto-connect on load
 window.addEventListener('load', () => {
   const saved = localStorage.getItem('dc-api-url');
   const savedKey = localStorage.getItem('dc-master-key');
   // Default: same origin (works both local and deployed)
   document.getElementById('api-url').value = saved || window.location.origin;
-  if (savedKey) document.getElementById('master-key').value = savedKey;
+  if (savedKey) {
+    document.getElementById('master-key').value = savedKey;
+    // Auto-connect se já tem key salva
+    setTimeout(() => connect(), 300);
+  }
 });
 
 const origConnect = connect;

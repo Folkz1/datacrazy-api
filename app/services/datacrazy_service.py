@@ -20,17 +20,23 @@ class DataCrazyClient:
     def configured(self) -> bool:
         return bool(self.token)
 
+    def _extract_data(self, response_json):
+        """Extract data from API response — handles both {count, data} and raw formats."""
+        if isinstance(response_json, dict) and "data" in response_json:
+            return response_json["data"]
+        return response_json
+
     async def list_pipelines(self) -> list:
         async with httpx.AsyncClient(timeout=30, headers=self.headers) as client:
             resp = await client.get(f"{self.base_url}/api/v1/pipelines")
             resp.raise_for_status()
-            return resp.json()
+            return self._extract_data(resp.json())
 
     async def get_pipeline_stages(self, pipeline_id: str) -> list:
         async with httpx.AsyncClient(timeout=30, headers=self.headers) as client:
             resp = await client.get(f"{self.base_url}/api/v1/pipelines/{pipeline_id}/stages")
             resp.raise_for_status()
-            return resp.json()
+            return self._extract_data(resp.json())
 
     async def list_businesses(self, stage_ids: list[str] | None = None, limit: int = 100) -> list:
         params = {"limit": limit}
@@ -39,7 +45,7 @@ class DataCrazyClient:
         async with httpx.AsyncClient(timeout=30, headers=self.headers) as client:
             resp = await client.get(f"{self.base_url}/api/v1/businesses", params=params)
             resp.raise_for_status()
-            return resp.json()
+            return self._extract_data(resp.json())
 
     async def get_business(self, business_id: str) -> dict:
         async with httpx.AsyncClient(timeout=30, headers=self.headers) as client:
@@ -57,7 +63,7 @@ class DataCrazyClient:
         async with httpx.AsyncClient(timeout=30, headers=self.headers) as client:
             resp = await client.get(f"{self.base_url}/api/v1/leads", params={"limit": limit})
             resp.raise_for_status()
-            return resp.json()
+            return self._extract_data(resp.json())
 
     async def health_check(self) -> dict:
         """Testa conexão com DataCrazy API."""

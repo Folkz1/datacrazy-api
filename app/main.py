@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.database import init_db
 from app.core.config import settings
-from app.api import clients, events, reports
+from app.api import clients, events, reports, crm
 from app.services.datacrazy_service import DataCrazyClient
 
 
@@ -44,6 +44,7 @@ app.add_middleware(
 app.include_router(clients.router)
 app.include_router(events.router)
 app.include_router(reports.router)
+app.include_router(crm.router)
 
 
 # Dashboard static files
