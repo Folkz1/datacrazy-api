@@ -413,6 +413,7 @@ async function loadClients() {
         <td>${c.events_enabled.map(e=>'<span class="badge badge-blue mr-1">'+e+'</span>').join('')}</td>
         <td>${c.active ? '<span class="badge badge-green">Ativo</span>' : '<span class="badge badge-red">Inativo</span>'}</td>
         <td class="space-x-2">
+          <button onclick="toggleClient('${c.id}', ${!c.active})" class="text-xs hover:underline ${c.active ? 'text-yellow-400' : 'text-green-400'}">${c.active ? 'Desativar' : 'Ativar'}</button>
           <button onclick="editClient('${c.id}')" class="text-blue-400 text-xs hover:underline">Editar</button>
           <button onclick="deleteClient('${c.id}')" class="text-red-400 text-xs hover:underline">Remover</button>
         </td>
@@ -511,6 +512,17 @@ async function saveClient() {
       loadDashboard();
     } catch (e) { toast('Erro: ' + e.message, 'red'); }
   }
+}
+
+async function toggleClient(id, activate) {
+  const action = activate ? 'ativar' : 'desativar';
+  if (!confirm(`${activate ? 'Ativar' : 'Desativar'} este cliente? ${activate ? 'Eventos voltarão a ser enviados.' : 'Nenhum evento será enviado enquanto estiver inativo.'}`)) return;
+  try {
+    await api('/api/clients/' + id, { method: 'PATCH', body: JSON.stringify({ active: activate }) });
+    toast(`Cliente ${activate ? 'ativado' : 'desativado'}!`, 'green');
+    loadClients();
+    loadDashboard();
+  } catch (e) { toast('Erro: ' + e.message, 'red'); }
 }
 
 async function deleteClient(id) {
