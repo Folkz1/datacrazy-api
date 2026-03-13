@@ -123,6 +123,29 @@
         <input id="nc-crm-token" type="text" class="w-full" placeholder="dc_eyJhbG...">
       </div>
     </div>
+
+    <!-- Stage Mapping -->
+    <div id="stage-mapping-section" class="mt-4 hidden">
+      <div class="flex justify-between items-center mb-2">
+        <h4 class="text-sm font-semibold text-gray-300">Mapeamento de Estágios CRM → Evento Meta</h4>
+        <button onclick="loadStagesForMapping()" class="btn btn-ghost text-xs">Carregar Estágios do CRM</button>
+      </div>
+      <p class="text-xs text-gray-500 mb-3">Defina qual estágio do CRM dispara qual evento no Meta Pixel. Estágios não mapeados serão ignorados.</p>
+      <div id="stage-mapping-list" class="space-y-2">
+        <p class="text-gray-500 text-sm">Clique "Carregar Estágios do CRM" para configurar</p>
+      </div>
+      <div id="stage-mapping-summary" class="mt-3 hidden">
+        <div class="bg-surface rounded-lg p-3">
+          <p class="text-xs text-gray-400 mb-1">Resumo do mapeamento:</p>
+          <div class="flex gap-4">
+            <span class="text-xs"><span class="text-green-400 font-bold" id="sm-purchase-count">0</span> → Purchase</span>
+            <span class="text-xs"><span class="text-blue-400 font-bold" id="sm-lead-count">0</span> → Lead</span>
+            <span class="text-xs"><span class="text-gray-500 font-bold" id="sm-ignore-count">0</span> → Ignorar</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="flex gap-2 mt-4">
       <button onclick="saveClient()" id="cf-btn" class="btn btn-primary text-sm">Criar Cliente</button>
       <button onclick="hideClientForm()" class="btn btn-ghost text-sm">Cancelar</button>
@@ -448,6 +471,7 @@ function showNewClient() {
   document.getElementById('nc-token').value = '';
   document.getElementById('nc-crm-token').value = '';
   document.querySelectorAll('.nc-events').forEach(cb => cb.checked = ['Purchase','Lead'].includes(cb.value));
+  document.getElementById('stage-mapping-section').classList.add('hidden');
   document.getElementById('client-form').classList.remove('hidden');
 }
 
@@ -464,7 +488,12 @@ function editClient(id) {
   document.getElementById('nc-token').placeholder = c.meta_access_token ? c.meta_access_token.slice(0,12) + '... (atual)' : 'Cole o token aqui';
   document.getElementById('nc-crm-token').value = '';
   document.querySelectorAll('.nc-events').forEach(cb => cb.checked = c.events_enabled.includes(cb.value));
+  document.getElementById('stage-mapping-section').classList.remove('hidden');
   document.getElementById('client-form').classList.remove('hidden');
+  // Auto-load stages if client has CRM configured
+  if (c.crm_credentials?.stage_map || c.crm_credentials?.datacrazy_token) {
+    loadStagesForMapping();
+  }
 }
 
 function hideClientForm() { document.getElementById('client-form').classList.add('hidden'); }
@@ -483,7 +512,13 @@ async function saveClient() {
     const token = document.getElementById('nc-token').value;
     if (token) payload.meta_access_token = token;
     const crmToken = document.getElementById('nc-crm-token').value;
-    if (crmToken) payload.crm_credentials = { datacrazy_token: crmToken };
+    const stageMap = getStageMapFromUI();
+    const existingCreds = clients.find(c => c.id === editId)?.crm_credentials || {};
+    const newCreds = { ...existingCreds };
+    if (crmToken) newCreds.datacrazy_token = crmToken;
+    if (stageMap) newCreds.stage_map = stageMap;
+    else delete newCreds.stage_map;
+    payload.crm_credentials = newCreds;
 
     try {
       await api('/api/clients/' + editId, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -512,6 +547,90 @@ async function saveClient() {
       loadDashboard();
     } catch (e) { toast('Erro: ' + e.message, 'red'); }
   }
+}
+
+// --- Stage Mapping ---
+let cachedPipelineStages = null;
+
+async function loadStagesForMapping() {
+  const list = document.getElementById('stage-mapping-list');
+  list.innerHTML = '<p class="text-gray-400 text-sm">Carregando estágios...</p>';
+
+  try {
+    if (!cachedPipelineStages) {
+      cachedPipelineStages = await api('/api/crm/pipelines');
+    }
+
+    // Get current stage_map from editing client
+    const editId = document.getElementById('cf-id').value;
+    const currentClient = editId ? clients.find(c => c.id === editId) : null;
+    const currentMap = currentClient?.crm_credentials?.stage_map || {};
+
+    list.innerHTML = '';
+    for (const p of cachedPipelineStages) {
+      const pipeHeader = document.createElement('div');
+      pipeHeader.className = 'text-xs font-semibold text-gray-400 mt-2 mb-1';
+      pipeHeader.textContent = p.name + ' (' + p.stages_count + ' estágios)';
+      list.appendChild(pipeHeader);
+
+      for (const s of p.stages) {
+        const stageName = s.name.toLowerCase().trim();
+        // Determine current value: custom map > default detection
+        let currentEvent = currentMap[stageName] || currentMap[s.name] || '';
+        if (!currentEvent) {
+          // Check DEFAULT_STAGE_MAP equivalents
+          const defaults = {ganho:'Purchase',won:'Purchase',pago:'Purchase',renovado:'Purchase',fechado:'Purchase',
+            'qualificação':'Lead',qualificado:'Lead',proposta:'Lead','em contato':'Lead','em discussão':'Lead','novo contato':'Lead',novo:'Lead'};
+          for (const [k,v] of Object.entries(defaults)) {
+            if (stageName.includes(k)) { currentEvent = v; break; }
+          }
+        }
+
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-3 bg-surface rounded-lg px-3 py-2';
+        row.innerHTML = `
+          <span class="text-sm flex-1">${esc(s.name)}</span>
+          <select class="stage-map-select text-xs w-36" data-stage="${esc(s.name)}" onchange="updateStageSummary()">
+            <option value="" ${!currentEvent ? 'selected' : ''}>Ignorar</option>
+            <option value="Purchase" ${currentEvent === 'Purchase' ? 'selected' : ''}>Purchase (Conversão)</option>
+            <option value="Lead" ${currentEvent === 'Lead' ? 'selected' : ''}>Lead (Qualificado)</option>
+            <option value="ViewContent" ${currentEvent === 'ViewContent' ? 'selected' : ''}>ViewContent</option>
+            <option value="AddToCart" ${currentEvent === 'AddToCart' ? 'selected' : ''}>AddToCart</option>
+            <option value="InitiateCheckout" ${currentEvent === 'InitiateCheckout' ? 'selected' : ''}>InitiateCheckout</option>
+            <option value="CompleteRegistration" ${currentEvent === 'CompleteRegistration' ? 'selected' : ''}>CompleteRegistration</option>
+          </select>`;
+        list.appendChild(row);
+      }
+    }
+    document.getElementById('stage-mapping-summary').classList.remove('hidden');
+    updateStageSummary();
+  } catch (e) {
+    list.innerHTML = `<p class="text-red-400 text-sm">Erro ao carregar: ${esc(e.message)}</p>`;
+  }
+}
+
+function updateStageSummary() {
+  const selects = document.querySelectorAll('.stage-map-select');
+  let purchase = 0, lead = 0, ignore = 0;
+  selects.forEach(s => {
+    if (s.value === 'Purchase') purchase++;
+    else if (s.value === 'Lead') lead++;
+    else if (!s.value) ignore++;
+    else lead++; // other events count as lead-like
+  });
+  document.getElementById('sm-purchase-count').textContent = purchase;
+  document.getElementById('sm-lead-count').textContent = lead;
+  document.getElementById('sm-ignore-count').textContent = ignore;
+}
+
+function getStageMapFromUI() {
+  const map = {};
+  document.querySelectorAll('.stage-map-select').forEach(s => {
+    if (s.value) {
+      map[s.dataset.stage.toLowerCase().trim()] = s.value;
+    }
+  });
+  return Object.keys(map).length ? map : null;
 }
 
 async function toggleClient(id, activate) {
