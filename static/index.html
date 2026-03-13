@@ -497,16 +497,15 @@ function editClient(id) {
   document.getElementById('cf-id').value = id;
   document.getElementById('cf-title').textContent = 'Editar Cliente: ' + c.name;
   document.getElementById('cf-btn').textContent = 'Salvar Alteracoes';
-  document.getElementById('cf-token-hint').textContent = c.meta_access_token ? '(deixe vazio para manter o atual)' : '';
-  document.getElementById('cf-crm-hint').textContent = c.crm_credentials?.datacrazy_token ? '(salvo — deixe vazio para manter)' : '';
+  document.getElementById('cf-token-hint').textContent = c.meta_access_token ? '(limpe e cole novo para alterar)' : '';
+  document.getElementById('cf-crm-hint').textContent = c.crm_credentials?.datacrazy_token ? '(limpe e cole novo para alterar)' : '';
   document.getElementById('nc-name').value = c.name;
   document.getElementById('nc-pixel').value = c.pixel_id;
-  document.getElementById('nc-token').value = '';
-  document.getElementById('nc-token').placeholder = c.meta_access_token ? c.meta_access_token.slice(0,12) + '... (atual)' : 'Cole o token aqui';
-  document.getElementById('nc-crm-token').value = '';
-  document.getElementById('nc-crm-token').placeholder = c.crm_credentials?.datacrazy_token
-    ? c.crm_credentials.datacrazy_token.slice(0,12) + '... (atual)'
-    : 'Token DataCrazy (opcional)';
+  // Show masked token as VALUE (white text) not placeholder (gray text)
+  document.getElementById('nc-token').value = c.meta_access_token || '';
+  document.getElementById('nc-token').placeholder = 'Cole o token aqui';
+  document.getElementById('nc-crm-token').value = c.crm_credentials?.datacrazy_token || '';
+  document.getElementById('nc-crm-token').placeholder = 'Token DataCrazy (opcional)';
   document.querySelectorAll('.nc-events').forEach(cb => cb.checked = c.events_enabled.includes(cb.value));
   document.getElementById('stage-mapping-section').classList.remove('hidden');
   document.getElementById('field-mapping-section').classList.remove('hidden');
