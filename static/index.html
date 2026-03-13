@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataCrazy Gateway — Meta CAPI</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={darkMode:'class',theme:{extend:{colors:{brand:'#6366f1',surface:'#1e1e2e',card:'#262637',border:'#3b3b5c'}}}}</script>
+<style>
+  body{font-family:'Inter',system-ui,sans-serif;background:#0f0f1a}
+  .fade-in{animation:fadeIn .3s ease-in}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .toast{position:fixed;bottom:24px;right:24px;z-index:999;animation:fadeIn .3s}
+  .status-sent{color:#22c55e}.status-error{color:#ef4444}.status-pending{color:#eab308}
+  input,select,textarea{background:#1a1a2e!important;border:1px solid #3b3b5c;color:#e2e8f0;border-radius:8px;padding:8px 12px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 2px rgba(99,102,241,.25)}
+  .btn{padding:8px 20px;border-radius:8px;font-weight:600;cursor:pointer;transition:all .15s}
+  .btn-primary{background:#6366f1;color:white}.btn-primary:hover{background:#4f46e5}
+  .btn-danger{background:#dc2626;color:white}.btn-danger:hover{background:#b91c1c}
+  .btn-ghost{background:transparent;color:#a5b4fc;border:1px solid #3b3b5c}.btn-ghost:hover{background:#262637}
+  .tab-active{border-bottom:2px solid #6366f1;color:#a5b4fc}
+  .tab{cursor:pointer;padding:12px 20px;color:#6b7280;transition:color .15s}
+  .tab:hover{color:#e2e8f0}
+  .card{background:#262637;border:1px solid #3b3b5c;border-radius:12px;padding:24px}
+  .metric{text-align:center}
+  .metric .value{font-size:2rem;font-weight:700;color:#a5b4fc}
+  .metric .label{font-size:.8rem;color:#6b7280;text-transform:uppercase;letter-spacing:.05em}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;padding:8px 12px;color:#6b7280;font-size:.75rem;text-transform:uppercase;border-bottom:1px solid #3b3b5c}
+  td{padding:10px 12px;border-bottom:1px solid #1e1e2e;font-size:.875rem;color:#e2e8f0}
+  tr:hover td{background:#1e1e2e}
+  .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.75rem;font-weight:600}
+  .badge-green{background:#064e3b;color:#34d399}
+  .badge-red{background:#450a0a;color:#f87171}
+  .badge-yellow{background:#422006;color:#fbbf24}
+  .badge-blue{background:#172554;color:#60a5fa}
+</style>
+</head>
+<body class="text-gray-200 min-h-screen">
+
+<!-- Header -->
+<header class="border-b border-border px-6 py-4 flex items-center justify-between">
+  <div class="flex items-center gap-3">
+    <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center font-bold text-white text-sm">DC</div>
+    <h1 class="text-lg font-bold text-white">DataCrazy Gateway</h1>
+    <span class="text-xs text-gray-500 ml-2">Meta Conversions API</span>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="health-dot" class="w-2 h-2 rounded-full bg-gray-500"></span>
+    <span id="health-text" class="text-xs text-gray-500">Conectando...</span>
+    <input id="api-url" type="text" value="http://localhost:8100" class="text-xs w-48" placeholder="API URL">
+    <input id="master-key" type="password" placeholder="Master Key" class="text-xs w-40">
+    <button onclick="connect()" class="btn btn-primary text-xs">Conectar</button>
+  </div>
+</header>
+
+<!-- Tabs -->
+<nav class="flex border-b border-border px-6">
+  <div class="tab tab-active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</div>
+  <div class="tab" data-tab="clients" onclick="switchTab('clients')">Clientes</div>
+  <div class="tab" data-tab="events" onclick="switchTab('events')">Eventos</div>
+  <div class="tab" data-tab="test" onclick="switchTab('test')">Testar Disparo</div>
+</nav>
+
+<!-- Dashboard Tab -->
+<main id="tab-dashboard" class="p-6 fade-in">
+  <div class="grid grid-cols-4 gap-4 mb-6">
+    <div class="card metric"><div class="value" id="m-clients">-</div><div class="label">Clientes</div></div>
+    <div class="card metric"><div class="value" id="m-events">-</div><div class="label">Eventos Enviados</div></div>
+    <div class="card metric"><div class="value" id="m-errors">-</div><div class="label">Erros</div></div>
+    <div class="card metric"><div class="value" id="m-rate">-</div><div class="label">Taxa Sucesso</div></div>
+  </div>
+  <div class="grid grid-cols-2 gap-4">
+    <div class="card">
+      <h3 class="text-sm font-semibold text-gray-400 mb-3">Eventos por Tipo</h3>
+      <div id="events-by-type" class="space-y-2"></div>
+    </div>
+    <div class="card">
+      <h3 class="text-sm font-semibold text-gray-400 mb-3">Ultimos Eventos</h3>
+      <div id="recent-events" class="space-y-2 max-h-64 overflow-y-auto"></div>
+    </div>
+  </div>
+</main>
+
+<!-- Clients Tab -->
+<main id="tab-clients" class="p-6 fade-in hidden">
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-lg font-bold">Clientes</h2>
+    <button onclick="showNewClient()" class="btn btn-primary text-sm">+ Novo Cliente</button>
+  </div>
+
+  <!-- New Client Form -->
+  <div id="new-client-form" class="card mb-4 hidden">
+    <h3 class="font-semibold mb-3">Cadastrar Cliente</h3>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="text-xs text-gray-400">Nome *</label>
+        <input id="nc-name" type="text" class="w-full" placeholder="Ex: Pacific Surf School">
+      </div>
+      <div>
+        <label class="text-xs text-gray-400">Meta Pixel ID *</label>
+        <input id="nc-pixel" type="text" class="w-full" placeholder="Ex: 230237130670283">
+      </div>
+      <div class="col-span-2">
+        <label class="text-xs text-gray-400">Meta Access Token *</label>
+        <input id="nc-token" type="text" class="w-full" placeholder="EAATvcmlRNpc...">
+      </div>
+      <div>
+        <label class="text-xs text-gray-400">Eventos Habilitados</label>
+        <div class="flex flex-wrap gap-2 mt-1">
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="Purchase" checked class="nc-events"> Purchase</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="Lead" checked class="nc-events"> Lead</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="ViewContent" class="nc-events"> ViewContent</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="AddToCart" class="nc-events"> AddToCart</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="InitiateCheckout" class="nc-events"> InitiateCheckout</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="CompleteRegistration" class="nc-events"> CompleteRegistration</label>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs text-gray-400">Token DataCrazy CRM (opcional)</label>
+        <input id="nc-crm-token" type="text" class="w-full" placeholder="dc_eyJhbG...">
+      </div>
+    </div>
+    <div class="flex gap-2 mt-4">
+      <button onclick="createClient()" class="btn btn-primary text-sm">Criar Cliente</button>
+      <button onclick="hideNewClient()" class="btn btn-ghost text-sm">Cancelar</button>
+    </div>
+  </div>
+
+  <div id="clients-table" class="card">
+    <table>
+      <thead><tr><th>Nome</th><th>Pixel ID</th><th>API Key</th><th>Eventos</th><th>Status</th><th>Acoes</th></tr></thead>
+      <tbody id="clients-body"></tbody>
+    </table>
+  </div>
+</main>
+
+<!-- Events Tab -->
+<main id="tab-events" class="p-6 fade-in hidden">
+  <div class="flex gap-3 mb-4 items-end">
+    <div>
+      <label class="text-xs text-gray-400">Cliente</label>
+      <select id="ev-client" class="w-48" onchange="loadEvents()"><option value="">Todos</option></select>
+    </div>
+    <div>
+      <label class="text-xs text-gray-400">Status</label>
+      <select id="ev-status" class="w-32" onchange="loadEvents()">
+        <option value="">Todos</option><option value="sent">Sent</option><option value="error">Error</option>
+      </select>
+    </div>
+    <div>
+      <label class="text-xs text-gray-400">Tipo</label>
+      <select id="ev-type" class="w-36" onchange="loadEvents()">
+        <option value="">Todos</option><option>Purchase</option><option>Lead</option><option>ViewContent</option>
+      </select>
+    </div>
+    <button onclick="loadEvents()" class="btn btn-ghost text-sm">Atualizar</button>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr><th>Data</th><th>Cliente</th><th>Tipo</th><th>Status</th><th>Resposta Meta</th></tr></thead>
+      <tbody id="events-body"></tbody>
+    </table>
+    <p id="events-empty" class="text-gray-500 text-center py-8 hidden">Nenhum evento encontrado</p>
+  </div>
+</main>
+
+<!-- Test Tab -->
+<main id="tab-test" class="p-6 fade-in hidden">
+  <div class="grid grid-cols-2 gap-6">
+    <div class="card">
+      <h3 class="font-semibold mb-4">Disparar Evento de Teste</h3>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs text-gray-400">Cliente *</label>
+          <select id="t-client" class="w-full"></select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-gray-400">Tipo de Evento *</label>
+            <select id="t-event-type" class="w-full">
+              <option>Purchase</option><option>Lead</option><option>ViewContent</option>
+              <option>AddToCart</option><option>InitiateCheckout</option><option>CompleteRegistration</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400">Source URL</label>
+            <input id="t-source-url" type="text" class="w-full" placeholder="https://site.com/obrigado">
+          </div>
+        </div>
+        <h4 class="text-xs font-semibold text-gray-400 mt-2">Dados do Usuario</h4>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-400">Email</label><input id="t-email" type="email" class="w-full" placeholder="lead@example.com"></div>
+          <div><label class="text-xs text-gray-400">Telefone</label><input id="t-phone" type="text" class="w-full" placeholder="5547999220055"></div>
+          <div><label class="text-xs text-gray-400">Nome</label><input id="t-fname" type="text" class="w-full" placeholder="Joao"></div>
+          <div><label class="text-xs text-gray-400">Sobrenome</label><input id="t-lname" type="text" class="w-full" placeholder="Silva"></div>
+        </div>
+        <h4 class="text-xs font-semibold text-gray-400 mt-2">Dados do Evento</h4>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-400">Valor (R$)</label><input id="t-value" type="number" class="w-full" placeholder="1500.00"></div>
+          <div><label class="text-xs text-gray-400">Moeda</label><input id="t-currency" type="text" class="w-full" value="BRL"></div>
+          <div class="col-span-2"><label class="text-xs text-gray-400">Content Name</label><input id="t-content" type="text" class="w-full" placeholder="Aula de Surf Privada"></div>
+        </div>
+        <div class="flex items-center gap-3 mt-2">
+          <label class="flex items-center gap-2 text-sm">
+            <input id="t-test-mode" type="checkbox" checked> Modo Teste (Meta Test Events)
+          </label>
+        </div>
+        <button onclick="fireTestEvent()" id="btn-fire" class="btn btn-primary w-full mt-3">Disparar Evento</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3 class="font-semibold mb-4">Resultado</h3>
+      <pre id="test-result" class="bg-surface rounded-lg p-4 text-xs font-mono overflow-auto max-h-[500px] text-gray-300">Dispare um evento para ver o resultado aqui...</pre>
+    </div>
+  </div>
+
+  <!-- Webhook Example -->
+  <div class="card mt-6">
+    <h3 class="font-semibold mb-3">Exemplo de Webhook (para integrar com CRM)</h3>
+    <pre class="bg-surface rounded-lg p-4 text-xs font-mono text-gray-400 overflow-auto">POST /api/events/webhook
+Headers: { "X-API-Key": "dc_xxxxx" }
+
+{
+  "event": "deal_won",
+  "data": {
+    "deal_id": "123",
+    "value": 1500.00,
+    "currency": "BRL",
+    "email": "lead@example.com",
+    "phone": "5547999220055",
+    "name": "Joao Silva"
+  }
+}</pre>
+  </div>
+</main>
+
+<script>
+let API = '';
+let KEY = '';
+let clients = [];
+
+// --- Connection ---
+async function connect() {
+  API = document.getElementById('api-url').value.replace(/\/+$/, '');
+  KEY = document.getElementById('master-key').value;
+  try {
+    const r = await api('/api/health');
+    document.getElementById('health-dot').className = 'w-2 h-2 rounded-full bg-green-500';
+    document.getElementById('health-text').textContent = 'Conectado | v' + r.version;
+    document.getElementById('health-text').className = 'text-xs text-green-400';
+    toast('Conectado com sucesso!', 'green');
+    loadDashboard();
+    loadClients();
+  } catch (e) {
+    document.getElementById('health-dot').className = 'w-2 h-2 rounded-full bg-red-500';
+    document.getElementById('health-text').textContent = 'Erro: ' + e.message;
+    document.getElementById('health-text').className = 'text-xs text-red-400';
+    toast('Falha na conexao: ' + e.message, 'red');
+  }
+}
+
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (KEY) headers['X-API-Key'] = KEY;
+  const r = await fetch(API + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  if (!r.ok) {
+    const body = await r.text();
+    throw new Error(r.status + ': ' + body.slice(0, 200));
+  }
+  if (r.status === 204) return null;
+  return r.json();
+}
+
+// --- Dashboard ---
+async function loadDashboard() {
+  try {
+    const [cl, stats] = await Promise.all([api('/api/clients'), api('/api/events/stats')]);
+    clients = cl;
+    document.getElementById('m-clients').textContent = cl.length;
+    const sent = stats.by_status?.sent || 0;
+    const err = stats.by_status?.error || 0;
+    const total = stats.total || 0;
+    document.getElementById('m-events').textContent = sent;
+    document.getElementById('m-errors').textContent = err;
+    document.getElementById('m-rate').textContent = total > 0 ? Math.round(sent / total * 100) + '%' : '-';
+
+    // By type
+    const byType = document.getElementById('events-by-type');
+    byType.innerHTML = '';
+    const types = stats.by_type || {};
+    for (const [t, c] of Object.entries(types)) {
+      byType.innerHTML += `<div class="flex justify-between"><span class="text-sm">${t}</span><span class="badge badge-blue">${c}</span></div>`;
+    }
+    if (!Object.keys(types).length) byType.innerHTML = '<p class="text-gray-500 text-sm">Nenhum evento ainda</p>';
+
+    // Recent events
+    const evts = await api('/api/events?limit=10');
+    const recent = document.getElementById('recent-events');
+    recent.innerHTML = '';
+    const evtList = Array.isArray(evts) ? evts : [];
+    for (const e of evtList.slice(0, 8)) {
+      const time = new Date(e.created_at).toLocaleString('pt-BR', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'});
+      const statusCls = e.status === 'sent' ? 'badge-green' : e.status === 'error' ? 'badge-red' : 'badge-yellow';
+      recent.innerHTML += `<div class="flex justify-between items-center text-sm"><span>${time} — ${e.event_type}</span><span class="badge ${statusCls}">${e.status}</span></div>`;
+    }
+    if (!evtList.length) recent.innerHTML = '<p class="text-gray-500 text-sm">Nenhum evento ainda</p>';
+  } catch (e) {
+    console.error('Dashboard:', e);
+  }
+}
+
+// --- Clients ---
+async function loadClients() {
+  try {
+    clients = await api('/api/clients');
+    const body = document.getElementById('clients-body');
+    body.innerHTML = '';
+    for (const c of clients) {
+      body.innerHTML += `<tr>
+        <td class="font-medium">${esc(c.name)}</td>
+        <td class="font-mono text-xs">${esc(c.pixel_id)}</td>
+        <td><code class="text-xs bg-surface px-2 py-1 rounded cursor-pointer" onclick="copyKey('${esc(c.api_key)}')">${c.api_key.slice(0,12)}... <span class="text-gray-500">copiar</span></code></td>
+        <td>${c.events_enabled.map(e=>'<span class="badge badge-blue mr-1">'+e+'</span>').join('')}</td>
+        <td>${c.active ? '<span class="badge badge-green">Ativo</span>' : '<span class="badge badge-red">Inativo</span>'}</td>
+        <td><button onclick="deleteClient('${c.id}')" class="text-red-400 text-xs hover:underline">Remover</button></td>
+      </tr>`;
+    }
+    // Populate selects
+    populateClientSelects();
+  } catch (e) {
+    console.error('Clients:', e);
+  }
+}
+
+function populateClientSelects() {
+  for (const sel of ['ev-client', 't-client']) {
+    const el = document.getElementById(sel);
+    const val = el.value;
+    const isFilter = sel === 'ev-client';
+    el.innerHTML = isFilter ? '<option value="">Todos</option>' : '';
+    for (const c of clients) {
+      el.innerHTML += `<option value="${c.id}">${esc(c.name)} (${c.pixel_id})</option>`;
+    }
+    if (val) el.value = val;
+  }
+}
+
+function showNewClient() { document.getElementById('new-client-form').classList.remove('hidden'); }
+function hideNewClient() { document.getElementById('new-client-form').classList.add('hidden'); }
+
+async function createClient() {
+  const events = [...document.querySelectorAll('.nc-events:checked')].map(e => e.value);
+  const payload = {
+    name: document.getElementById('nc-name').value,
+    pixel_id: document.getElementById('nc-pixel').value,
+    meta_access_token: document.getElementById('nc-token').value,
+    events_enabled: events,
+    crm_credentials: {}
+  };
+  const crmToken = document.getElementById('nc-crm-token').value;
+  if (crmToken) payload.crm_credentials = { datacrazy_token: crmToken };
+
+  try {
+    const r = await api('/api/clients', { method: 'POST', body: JSON.stringify(payload) });
+    toast('Cliente criado! API Key: ' + r.api_key, 'green');
+    hideNewClient();
+    loadClients();
+    loadDashboard();
+  } catch (e) {
+    toast('Erro: ' + e.message, 'red');
+  }
+}
+
+async function deleteClient(id) {
+  if (!confirm('Remover este cliente?')) return;
+  try {
+    await api('/api/clients/' + id, { method: 'DELETE' });
+    toast('Cliente removido', 'green');
+    loadClients();
+    loadDashboard();
+  } catch (e) { toast('Erro: ' + e.message, 'red'); }
+}
+
+function copyKey(key) {
+  navigator.clipboard.writeText(key);
+  toast('API Key copiada!', 'green');
+}
+
+// --- Events ---
+async function loadEvents() {
+  const clientId = document.getElementById('ev-client').value;
+  const status = document.getElementById('ev-status').value;
+  const type = document.getElementById('ev-type').value;
+  let url = '/api/events?limit=50';
+  if (clientId) url += '&client_id=' + clientId;
+  if (status) url += '&status=' + status;
+  if (type) url += '&event_type=' + type;
+
+  try {
+    const evts = await api(url);
+    const list = Array.isArray(evts) ? evts : [];
+    const body = document.getElementById('events-body');
+    const empty = document.getElementById('events-empty');
+    body.innerHTML = '';
+    if (!list.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+
+    const clientMap = {};
+    clients.forEach(c => clientMap[c.id] = c.name);
+
+    for (const e of list) {
+      const time = new Date(e.created_at).toLocaleString('pt-BR');
+      const statusCls = e.status === 'sent' ? 'badge-green' : e.status === 'error' ? 'badge-red' : 'badge-yellow';
+      const metaStr = e.meta_response ? JSON.stringify(e.meta_response).slice(0, 80) : '-';
+      body.innerHTML += `<tr>
+        <td class="text-xs">${time}</td>
+        <td>${esc(clientMap[e.client_id] || e.client_id)}</td>
+        <td><span class="badge badge-blue">${e.event_type}</span></td>
+        <td><span class="badge ${statusCls}">${e.status}</span></td>
+        <td class="text-xs font-mono text-gray-400">${esc(metaStr)}</td>
+      </tr>`;
+    }
+  } catch (e) { toast('Erro: ' + e.message, 'red'); }
+}
+
+// --- Test Fire ---
+async function fireTestEvent() {
+  const btn = document.getElementById('btn-fire');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  const result = document.getElementById('test-result');
+
+  const clientId = document.getElementById('t-client').value;
+  if (!clientId) { toast('Selecione um cliente', 'red'); btn.disabled = false; btn.textContent = 'Disparar Evento'; return; }
+
+  const payload = {
+    client_id: clientId,
+    event_type: document.getElementById('t-event-type').value,
+    user_data: {
+      email: document.getElementById('t-email').value || undefined,
+      phone: document.getElementById('t-phone').value || undefined,
+      first_name: document.getElementById('t-fname').value || undefined,
+      last_name: document.getElementById('t-lname').value || undefined,
+    },
+    custom_data: {
+      value: parseFloat(document.getElementById('t-value').value) || undefined,
+      currency: document.getElementById('t-currency').value || undefined,
+      content_name: document.getElementById('t-content').value || undefined,
+    },
+    event_source_url: document.getElementById('t-source-url').value || undefined,
+    test_mode: document.getElementById('t-test-mode').checked,
+  };
+
+  // Clean undefined
+  Object.keys(payload.user_data).forEach(k => { if (!payload.user_data[k]) delete payload.user_data[k]; });
+  Object.keys(payload.custom_data).forEach(k => { if (!payload.custom_data[k]) delete payload.custom_data[k]; });
+
+  result.textContent = 'Enviando...\n\n' + JSON.stringify(payload, null, 2);
+
+  try {
+    const r = await api('/api/events/track', { method: 'POST', body: JSON.stringify(payload) });
+    const statusEmoji = r.status === 'sent' ? '✅' : '❌';
+    result.textContent = statusEmoji + ' RESULTADO\n\n' + JSON.stringify(r, null, 2);
+    result.className = r.status === 'sent'
+      ? 'bg-surface rounded-lg p-4 text-xs font-mono overflow-auto max-h-[500px] text-green-300'
+      : 'bg-surface rounded-lg p-4 text-xs font-mono overflow-auto max-h-[500px] text-red-300';
+    toast(r.status === 'sent' ? 'Evento enviado com sucesso!' : 'Erro no envio', r.status === 'sent' ? 'green' : 'red');
+    loadDashboard();
+    loadEvents();
+  } catch (e) {
+    result.textContent = '❌ ERRO\n\n' + e.message;
+    result.className = 'bg-surface rounded-lg p-4 text-xs font-mono overflow-auto max-h-[500px] text-red-300';
+    toast('Erro: ' + e.message, 'red');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Disparar Evento';
+}
+
+// --- Tabs ---
+function switchTab(name) {
+  document.querySelectorAll('[id^="tab-"]').forEach(t => t.classList.add('hidden'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-active'));
+  document.getElementById('tab-' + name).classList.remove('hidden');
+  document.querySelector(`[data-tab="${name}"]`).classList.add('tab-active');
+  if (name === 'events') loadEvents();
+}
+
+// --- Utils ---
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+function toast(msg, color = 'blue') {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<div class="px-4 py-3 rounded-lg shadow-lg text-sm font-medium" style="background:${color==='green'?'#064e3b':color==='red'?'#450a0a':'#172554'};color:${color==='green'?'#34d399':color==='red'?'#f87171':'#60a5fa'}">${esc(msg)}</div>`;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+// Auto-connect on load
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('dc-api-url');
+  const savedKey = localStorage.getItem('dc-master-key');
+  if (saved) document.getElementById('api-url').value = saved;
+  if (savedKey) document.getElementById('master-key').value = savedKey;
+});
+
+const origConnect = connect;
+connect = async function() {
+  localStorage.setItem('dc-api-url', document.getElementById('api-url').value);
+  localStorage.setItem('dc-master-key', document.getElementById('master-key').value);
+  await origConnect();
+};
+</script>
+</body>
+</html>

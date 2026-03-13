@@ -3,12 +3,13 @@ import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_master_key
 from app.core.database import get_db
 from app.models.client import Client
+from app.models.event import Event
 from app.api.schemas import ClientCreate, ClientUpdate, ClientResponse
 
 router = APIRouter(prefix="/api/clients", tags=["Clients"])
@@ -91,5 +92,6 @@ async def delete_client(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
+    await db.execute(delete(Event).where(Event.client_id == client_id))
     await db.delete(client)
     await db.commit()
