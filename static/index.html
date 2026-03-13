@@ -48,7 +48,7 @@
   <div class="flex items-center gap-3">
     <span id="health-dot" class="w-2 h-2 rounded-full bg-gray-500"></span>
     <span id="health-text" class="text-xs text-gray-500">Conectando...</span>
-    <input id="api-url" type="text" value="http://localhost:8100" class="text-xs w-48" placeholder="API URL">
+    <input id="api-url" type="text" value="" class="text-xs w-48" placeholder="API URL">
     <input id="master-key" type="password" placeholder="Master Key" class="text-xs w-40">
     <button onclick="connect()" class="btn btn-primary text-xs">Conectar</button>
   </div>
@@ -501,7 +501,8 @@ function toast(msg, color = 'blue') {
 window.addEventListener('load', () => {
   const saved = localStorage.getItem('dc-api-url');
   const savedKey = localStorage.getItem('dc-master-key');
-  if (saved) document.getElementById('api-url').value = saved;
+  // Default: same origin (works both local and deployed)
+  document.getElementById('api-url').value = saved || window.location.origin;
   if (savedKey) document.getElementById('master-key').value = savedKey;
 });
 
