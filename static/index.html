@@ -89,9 +89,10 @@
     <button onclick="showNewClient()" class="btn btn-primary text-sm">+ Novo Cliente</button>
   </div>
 
-  <!-- New Client Form -->
-  <div id="new-client-form" class="card mb-4 hidden">
-    <h3 class="font-semibold mb-3">Cadastrar Cliente</h3>
+  <!-- Client Form (create + edit) -->
+  <div id="client-form" class="card mb-4 hidden">
+    <h3 id="cf-title" class="font-semibold mb-3">Cadastrar Cliente</h3>
+    <input id="cf-id" type="hidden">
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label class="text-xs text-gray-400">Nome *</label>
@@ -102,7 +103,7 @@
         <input id="nc-pixel" type="text" class="w-full" placeholder="Ex: 230237130670283">
       </div>
       <div class="col-span-2">
-        <label class="text-xs text-gray-400">Meta Access Token *</label>
+        <label class="text-xs text-gray-400">Meta Access Token * <span id="cf-token-hint" class="text-gray-600"></span></label>
         <input id="nc-token" type="text" class="w-full" placeholder="EAATvcmlRNpc...">
       </div>
       <div>
@@ -122,14 +123,14 @@
       </div>
     </div>
     <div class="flex gap-2 mt-4">
-      <button onclick="createClient()" class="btn btn-primary text-sm">Criar Cliente</button>
-      <button onclick="hideNewClient()" class="btn btn-ghost text-sm">Cancelar</button>
+      <button onclick="saveClient()" id="cf-btn" class="btn btn-primary text-sm">Criar Cliente</button>
+      <button onclick="hideClientForm()" class="btn btn-ghost text-sm">Cancelar</button>
     </div>
   </div>
 
   <div id="clients-table" class="card">
     <table>
-      <thead><tr><th>Nome</th><th>Pixel ID</th><th>API Key</th><th>Eventos</th><th>Status</th><th>Acoes</th></tr></thead>
+      <thead><tr><th>Nome</th><th>Pixel ID</th><th>Token Meta</th><th>API Key</th><th>Eventos</th><th>Status</th><th>Acoes</th></tr></thead>
       <tbody id="clients-body"></tbody>
     </table>
   </div>
@@ -317,16 +318,21 @@ async function loadClients() {
     const body = document.getElementById('clients-body');
     body.innerHTML = '';
     for (const c of clients) {
+      const tokenMask = c.meta_access_token ? c.meta_access_token.slice(0,8) + '...' + c.meta_access_token.slice(-6) : 'N/A';
+      const tokenOk = c.meta_access_token && c.meta_access_token.startsWith('EAA') && c.meta_access_token.length > 20;
       body.innerHTML += `<tr>
         <td class="font-medium">${esc(c.name)}</td>
         <td class="font-mono text-xs">${esc(c.pixel_id)}</td>
+        <td><span class="text-xs ${tokenOk ? 'text-green-400' : 'text-red-400'}">${esc(tokenMask)}</span></td>
         <td><code class="text-xs bg-surface px-2 py-1 rounded cursor-pointer" onclick="copyKey('${esc(c.api_key)}')">${c.api_key.slice(0,12)}... <span class="text-gray-500">copiar</span></code></td>
         <td>${c.events_enabled.map(e=>'<span class="badge badge-blue mr-1">'+e+'</span>').join('')}</td>
         <td>${c.active ? '<span class="badge badge-green">Ativo</span>' : '<span class="badge badge-red">Inativo</span>'}</td>
-        <td><button onclick="deleteClient('${c.id}')" class="text-red-400 text-xs hover:underline">Remover</button></td>
+        <td class="space-x-2">
+          <button onclick="editClient('${c.id}')" class="text-blue-400 text-xs hover:underline">Editar</button>
+          <button onclick="deleteClient('${c.id}')" class="text-red-400 text-xs hover:underline">Remover</button>
+        </td>
       </tr>`;
     }
-    // Populate selects
     populateClientSelects();
   } catch (e) {
     console.error('Clients:', e);
@@ -346,34 +352,84 @@ function populateClientSelects() {
   }
 }
 
-function showNewClient() { document.getElementById('new-client-form').classList.remove('hidden'); }
-function hideNewClient() { document.getElementById('new-client-form').classList.add('hidden'); }
+function showNewClient() {
+  document.getElementById('cf-id').value = '';
+  document.getElementById('cf-title').textContent = 'Cadastrar Cliente';
+  document.getElementById('cf-btn').textContent = 'Criar Cliente';
+  document.getElementById('cf-token-hint').textContent = '';
+  document.getElementById('nc-name').value = '';
+  document.getElementById('nc-pixel').value = '';
+  document.getElementById('nc-token').value = '';
+  document.getElementById('nc-crm-token').value = '';
+  document.querySelectorAll('.nc-events').forEach(cb => cb.checked = ['Purchase','Lead'].includes(cb.value));
+  document.getElementById('client-form').classList.remove('hidden');
+}
 
-async function createClient() {
+function editClient(id) {
+  const c = clients.find(x => x.id === id);
+  if (!c) return;
+  document.getElementById('cf-id').value = id;
+  document.getElementById('cf-title').textContent = 'Editar Cliente: ' + c.name;
+  document.getElementById('cf-btn').textContent = 'Salvar Alteracoes';
+  document.getElementById('cf-token-hint').textContent = '(deixe vazio para manter o atual)';
+  document.getElementById('nc-name').value = c.name;
+  document.getElementById('nc-pixel').value = c.pixel_id;
+  document.getElementById('nc-token').value = '';
+  document.getElementById('nc-token').placeholder = c.meta_access_token ? c.meta_access_token.slice(0,12) + '... (atual)' : 'Cole o token aqui';
+  document.getElementById('nc-crm-token').value = '';
+  document.querySelectorAll('.nc-events').forEach(cb => cb.checked = c.events_enabled.includes(cb.value));
+  document.getElementById('client-form').classList.remove('hidden');
+}
+
+function hideClientForm() { document.getElementById('client-form').classList.add('hidden'); }
+
+async function saveClient() {
+  const editId = document.getElementById('cf-id').value;
   const events = [...document.querySelectorAll('.nc-events:checked')].map(e => e.value);
-  const payload = {
-    name: document.getElementById('nc-name').value,
-    pixel_id: document.getElementById('nc-pixel').value,
-    meta_access_token: document.getElementById('nc-token').value,
-    events_enabled: events,
-    crm_credentials: {}
-  };
-  const crmToken = document.getElementById('nc-crm-token').value;
-  if (crmToken) payload.crm_credentials = { datacrazy_token: crmToken };
 
-  try {
-    const r = await api('/api/clients', { method: 'POST', body: JSON.stringify(payload) });
-    toast('Cliente criado! API Key: ' + r.api_key, 'green');
-    hideNewClient();
-    loadClients();
-    loadDashboard();
-  } catch (e) {
-    toast('Erro: ' + e.message, 'red');
+  if (editId) {
+    // PATCH - update
+    const payload = {
+      name: document.getElementById('nc-name').value,
+      pixel_id: document.getElementById('nc-pixel').value,
+      events_enabled: events,
+    };
+    const token = document.getElementById('nc-token').value;
+    if (token) payload.meta_access_token = token;
+    const crmToken = document.getElementById('nc-crm-token').value;
+    if (crmToken) payload.crm_credentials = { datacrazy_token: crmToken };
+
+    try {
+      await api('/api/clients/' + editId, { method: 'PATCH', body: JSON.stringify(payload) });
+      toast('Cliente atualizado!', 'green');
+      hideClientForm();
+      loadClients();
+      loadDashboard();
+    } catch (e) { toast('Erro: ' + e.message, 'red'); }
+  } else {
+    // POST - create
+    const payload = {
+      name: document.getElementById('nc-name').value,
+      pixel_id: document.getElementById('nc-pixel').value,
+      meta_access_token: document.getElementById('nc-token').value,
+      events_enabled: events,
+      crm_credentials: {}
+    };
+    const crmToken = document.getElementById('nc-crm-token').value;
+    if (crmToken) payload.crm_credentials = { datacrazy_token: crmToken };
+
+    try {
+      const r = await api('/api/clients', { method: 'POST', body: JSON.stringify(payload) });
+      toast('Cliente criado! API Key: ' + r.api_key, 'green');
+      hideClientForm();
+      loadClients();
+      loadDashboard();
+    } catch (e) { toast('Erro: ' + e.message, 'red'); }
   }
 }
 
 async function deleteClient(id) {
-  if (!confirm('Remover este cliente?')) return;
+  if (!confirm('Remover este cliente e todos os eventos?')) return;
   try {
     await api('/api/clients/' + id, { method: 'DELETE' });
     toast('Cliente removido', 'green');

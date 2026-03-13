@@ -28,10 +28,12 @@ class ClientResponse(BaseModel):
     id: uuid.UUID
     name: str
     pixel_id: str
+    meta_access_token: str
     events_enabled: list[str]
     active: bool
     api_key: str
     created_at: datetime
+    crm_credentials: dict = {}
 
     model_config = {"from_attributes": True}
 
