@@ -32,6 +32,27 @@ def _extract_contact(lead: dict) -> tuple[str | None, str | None]:
     return email if email else None, phone if phone else None
 
 
+def _resolve_crm_field(data: dict, field_path: str | None) -> str | None:
+    """Resolve campo do lead pelo path configurado (ex: 'address.city')."""
+    if not field_path or not data:
+        return None
+    parts = field_path.replace("[0]", ".0").split(".")
+    current = data
+    for part in parts:
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+        if current is None:
+            return None
+    return str(current).strip() if current else None
+
+
 def _get_crm_client(token: str | None = None) -> DataCrazyClient:
     dc = DataCrazyClient(token=token)
     if not dc.configured:
@@ -94,6 +115,51 @@ async def list_leads(
         result.append(entry)
 
     return result
+
+
+@router.get("/lead-fields")
+async def get_lead_fields(
+    _: str = Depends(require_master_key),
+):
+    """Retorna todos os campos disponíveis de um lead real do CRM (para configurar mapeamento)."""
+    dc = _get_crm_client()
+    leads = await dc.list_leads(limit=5)
+    if not leads:
+        return {"fields": [], "sample": {}}
+
+    # Coletar todos os campos de múltiplos leads
+    all_fields = {}
+    for lead in leads:
+        _collect_fields(lead, all_fields, prefix="")
+
+    # Ordenar por frequência e retornar
+    fields = sorted(all_fields.items(), key=lambda x: (-x[1]["count"], x[0]))
+    return {
+        "fields": [{"path": f[0], "sample_value": f[1]["sample"], "count": f[1]["count"]} for f in fields],
+        "sample_lead": leads[0],
+        "leads_analyzed": len(leads),
+    }
+
+
+def _collect_fields(obj: dict, result: dict, prefix: str):
+    """Recursivamente coleta campos de um objeto, gerando paths tipo 'address.city'."""
+    if not isinstance(obj, dict):
+        return
+    for key, value in obj.items():
+        path = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
+        if isinstance(value, dict):
+            _collect_fields(value, result, path)
+        elif isinstance(value, list):
+            if value and isinstance(value[0], dict):
+                _collect_fields(value[0], result, f"{path}[0]")
+            elif value:
+                if path not in result:
+                    result[path] = {"sample": str(value[0])[:100], "count": 0}
+                result[path]["count"] += 1
+        else:
+            if path not in result:
+                result[path] = {"sample": str(value)[:100] if value else "", "count": 0}
+            result[path]["count"] += 1
 
 
 @router.get("/businesses")
@@ -179,11 +245,12 @@ async def fire_event_from_crm(
             email, phone = _extract_contact(lead)
             user_data["email"] = email
             user_data["phone"] = phone
-            user_data["city"] = lead.get("city") or lead.get("cidade") or None
-            user_data["state"] = lead.get("state") or lead.get("estado") or lead.get("uf") or None
-            user_data["country"] = lead.get("country") or "br"
-            user_data["zip_code"] = lead.get("zipCode") or lead.get("cep") or lead.get("postalCode") or None
-            user_data["date_of_birth"] = lead.get("birthDate") or lead.get("dateOfBirth") or lead.get("dataNascimento") or None
+            field_map = (client.crm_credentials or {}).get("field_map", {})
+            user_data["city"] = _resolve_crm_field(lead, field_map.get("city")) or lead.get("city") or lead.get("cidade") or None
+            user_data["state"] = _resolve_crm_field(lead, field_map.get("state")) or lead.get("state") or lead.get("estado") or lead.get("uf") or None
+            user_data["country"] = _resolve_crm_field(lead, field_map.get("country")) or lead.get("country") or "br"
+            user_data["zip_code"] = _resolve_crm_field(lead, field_map.get("zip_code")) or lead.get("zipCode") or lead.get("cep") or None
+            user_data["date_of_birth"] = _resolve_crm_field(lead, field_map.get("date_of_birth")) or lead.get("birthDate") or lead.get("dateOfBirth") or None
 
         if biz.get("total"):
             custom_data["value"] = float(biz["total"])

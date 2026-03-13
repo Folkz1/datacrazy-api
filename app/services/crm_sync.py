@@ -69,6 +69,28 @@ def _resolve_event_type(stage_name: str, status: str, client_stage_map: dict | N
     return None
 
 
+def _resolve_field(data: dict, field_path: str | None) -> str | None:
+    """Resolve um campo pelo path configurado (ex: 'address.city', 'customFields.cep').
+    Retorna None se path não existe ou valor vazio."""
+    if not field_path or not data:
+        return None
+    parts = field_path.replace("[0]", ".0").split(".")
+    current = data
+    for part in parts:
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+        if current is None:
+            return None
+    return str(current).strip() if current else None
+
+
 def _extract_contact(lead: dict) -> tuple[str | None, str | None]:
     """Extract email and phone from lead data."""
     email = lead.get("email") or None
@@ -138,17 +160,18 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
             continue
 
         name = lead.get("name") or ""
+        field_map = (client.crm_credentials or {}).get("field_map", {})
         user_data = {
             "email": email,
             "phone": phone,
             "first_name": name.split(" ")[0] or None,
             "last_name": " ".join(name.split(" ")[1:]) or None,
             "external_id": str(biz.get("leadId", "")),
-            "city": lead.get("city") or lead.get("cidade") or None,
-            "state": lead.get("state") or lead.get("estado") or lead.get("uf") or None,
-            "country": lead.get("country") or "br",
-            "zip_code": lead.get("zipCode") or lead.get("cep") or lead.get("postalCode") or None,
-            "date_of_birth": lead.get("birthDate") or lead.get("dateOfBirth") or lead.get("dataNascimento") or None,
+            "city": _resolve_field(lead, field_map.get("city")) or lead.get("city") or lead.get("cidade") or None,
+            "state": _resolve_field(lead, field_map.get("state")) or lead.get("state") or lead.get("estado") or lead.get("uf") or None,
+            "country": _resolve_field(lead, field_map.get("country")) or lead.get("country") or "br",
+            "zip_code": _resolve_field(lead, field_map.get("zip_code")) or lead.get("zipCode") or lead.get("cep") or None,
+            "date_of_birth": _resolve_field(lead, field_map.get("date_of_birth")) or lead.get("birthDate") or lead.get("dateOfBirth") or None,
         }
         user_data = {k: v for k, v in user_data.items() if v}
 

@@ -146,6 +146,18 @@
       </div>
     </div>
 
+    <!-- Field Mapping (CRM fields → Meta parameters) -->
+    <div id="field-mapping-section" class="mt-4 hidden">
+      <div class="flex justify-between items-center mb-2">
+        <h4 class="text-sm font-semibold text-gray-300">Mapeamento de Campos CRM → Meta Pixel</h4>
+        <button onclick="loadFieldsForMapping()" class="btn btn-ghost text-xs">Carregar Campos do CRM</button>
+      </div>
+      <p class="text-xs text-gray-500 mb-3">Associe campos do CRM aos parâmetros do Meta para melhorar a qualidade de correspondência (match quality).</p>
+      <div id="field-mapping-list" class="space-y-2">
+        <p class="text-gray-500 text-sm">Clique "Carregar Campos do CRM" para ver os campos disponíveis</p>
+      </div>
+    </div>
+
     <div class="flex gap-2 mt-4">
       <button onclick="saveClient()" id="cf-btn" class="btn btn-primary text-sm">Criar Cliente</button>
       <button onclick="hideClientForm()" class="btn btn-ghost text-sm">Cancelar</button>
@@ -472,6 +484,7 @@ function showNewClient() {
   document.getElementById('nc-crm-token').value = '';
   document.querySelectorAll('.nc-events').forEach(cb => cb.checked = ['Purchase','Lead'].includes(cb.value));
   document.getElementById('stage-mapping-section').classList.add('hidden');
+  document.getElementById('field-mapping-section').classList.add('hidden');
   document.getElementById('client-form').classList.remove('hidden');
 }
 
@@ -489,11 +502,13 @@ function editClient(id) {
   document.getElementById('nc-crm-token').value = '';
   document.querySelectorAll('.nc-events').forEach(cb => cb.checked = c.events_enabled.includes(cb.value));
   document.getElementById('stage-mapping-section').classList.remove('hidden');
+  document.getElementById('field-mapping-section').classList.remove('hidden');
   document.getElementById('client-form').classList.remove('hidden');
-  // Auto-load stages if client has CRM configured
+  // Auto-load stages and fields if client has CRM configured
   if (c.crm_credentials?.stage_map || c.crm_credentials?.datacrazy_token) {
     loadStagesForMapping();
   }
+  loadFieldsForMapping();
 }
 
 function hideClientForm() { document.getElementById('client-form').classList.add('hidden'); }
@@ -513,11 +528,14 @@ async function saveClient() {
     if (token) payload.meta_access_token = token;
     const crmToken = document.getElementById('nc-crm-token').value;
     const stageMap = getStageMapFromUI();
+    const fieldMap = getFieldMapFromUI();
     const existingCreds = clients.find(c => c.id === editId)?.crm_credentials || {};
     const newCreds = { ...existingCreds };
     if (crmToken) newCreds.datacrazy_token = crmToken;
     if (stageMap) newCreds.stage_map = stageMap;
     else delete newCreds.stage_map;
+    if (fieldMap) newCreds.field_map = fieldMap;
+    else delete newCreds.field_map;
     payload.crm_credentials = newCreds;
 
     try {
@@ -628,6 +646,80 @@ function getStageMapFromUI() {
   document.querySelectorAll('.stage-map-select').forEach(s => {
     if (s.value) {
       map[s.dataset.stage.toLowerCase().trim()] = s.value;
+    }
+  });
+  return Object.keys(map).length ? map : null;
+}
+
+// --- Field Mapping (CRM → Meta) ---
+const META_PARAMS = [
+  {key: 'city', label: 'Cidade', meta: 'ct', boost: '+14%'},
+  {key: 'state', label: 'Estado', meta: 'st', boost: '+14%'},
+  {key: 'country', label: 'País', meta: 'country', boost: '+14%'},
+  {key: 'zip_code', label: 'CEP / Código Postal', meta: 'zp', boost: '+14%'},
+  {key: 'date_of_birth', label: 'Data de Nascimento', meta: 'db', boost: '+14%'},
+];
+
+let cachedLeadFields = null;
+
+async function loadFieldsForMapping() {
+  const list = document.getElementById('field-mapping-list');
+  list.innerHTML = '<p class="text-gray-400 text-sm">Carregando campos do CRM...</p>';
+
+  try {
+    if (!cachedLeadFields) {
+      cachedLeadFields = await api('/api/crm/lead-fields');
+    }
+
+    const fields = cachedLeadFields.fields || [];
+    const editId = document.getElementById('cf-id').value;
+    const currentClient = editId ? clients.find(c => c.id === editId) : null;
+    const currentFieldMap = currentClient?.crm_credentials?.field_map || {};
+
+    list.innerHTML = '';
+
+    for (const param of META_PARAMS) {
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-3 bg-surface rounded-lg px-3 py-2';
+
+      const optionsHtml = fields.map(f => {
+        const selected = currentFieldMap[param.key] === f.path ? 'selected' : '';
+        const sample = f.sample_value ? ` (ex: ${esc(f.sample_value.slice(0, 30))})` : '';
+        return `<option value="${esc(f.path)}" ${selected}>${esc(f.path)}${sample}</option>`;
+      }).join('');
+
+      row.innerHTML = `
+        <div class="flex-1">
+          <span class="text-sm font-medium">${param.label}</span>
+          <span class="text-xs text-gray-500 ml-1">→ Meta: ${param.meta}</span>
+          <span class="text-xs text-green-400 ml-1">${param.boost}</span>
+        </div>
+        <select class="field-map-select text-xs w-56" data-param="${param.key}">
+          <option value="">Não mapear (usar detecção automática)</option>
+          ${optionsHtml}
+        </select>`;
+      list.appendChild(row);
+    }
+
+    // Show sample lead data
+    if (cachedLeadFields.sample_lead) {
+      const sampleDiv = document.createElement('div');
+      sampleDiv.className = 'mt-3 bg-surface rounded-lg p-3';
+      sampleDiv.innerHTML = `<p class="text-xs text-gray-400 mb-1">Lead exemplo do CRM (${cachedLeadFields.leads_analyzed} analisados, ${fields.length} campos):</p>
+        <pre class="text-xs font-mono text-gray-500 max-h-32 overflow-auto">${esc(JSON.stringify(cachedLeadFields.sample_lead, null, 2).slice(0, 800))}</pre>`;
+      list.appendChild(sampleDiv);
+    }
+
+  } catch (e) {
+    list.innerHTML = `<p class="text-red-400 text-sm">Erro: ${esc(e.message)}</p>`;
+  }
+}
+
+function getFieldMapFromUI() {
+  const map = {};
+  document.querySelectorAll('.field-map-select').forEach(s => {
+    if (s.value) {
+      map[s.dataset.param] = s.value;
     }
   });
   return Object.keys(map).length ? map : null;
