@@ -614,16 +614,8 @@ async function loadStagesForMapping() {
 
       for (const s of p.stages) {
         const stageName = s.name.toLowerCase().trim();
-        // Determine current value: custom map > default detection
+        // Only use explicitly configured mappings — default is always "Ignorar"
         let currentEvent = currentMap[stageName] || currentMap[s.name] || '';
-        if (!currentEvent) {
-          // Check DEFAULT_STAGE_MAP equivalents
-          const defaults = {ganho:'Purchase',won:'Purchase',pago:'Purchase',renovado:'Purchase',fechado:'Purchase',
-            'qualificação':'Lead',qualificado:'Lead',proposta:'Lead','em contato':'Lead','em discussão':'Lead','novo contato':'Lead',novo:'Lead'};
-          for (const [k,v] of Object.entries(defaults)) {
-            if (stageName.includes(k)) { currentEvent = v; break; }
-          }
-        }
 
         const row = document.createElement('div');
         row.className = 'flex items-center gap-3 bg-surface rounded-lg px-3 py-2';

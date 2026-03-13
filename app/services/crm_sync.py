@@ -21,23 +21,8 @@ logger = logging.getLogger("crm_sync")
 # State: última checagem por client_id
 _last_check: dict[str, str] = {}
 
-# Mapeamento padrão: stage name → Meta event type
-DEFAULT_STAGE_MAP = {
-    # Stages que indicam venda/ganho
-    "ganho": "Purchase",
-    "won": "Purchase",
-    "pago": "Purchase",
-    "renovado": "Purchase",
-    "fechado": "Purchase",
-    # Stages que indicam lead qualificado
-    "qualificação": "Lead",
-    "qualificado": "Lead",
-    "proposta": "Lead",
-    "em contato": "Lead",
-    "em discussão": "Lead",
-    "novo contato": "Lead",
-    "novo": "Lead",
-}
+# Sem mapeamento padrão — só dispara eventos para stages explicitamente configurados pelo cliente
+DEFAULT_STAGE_MAP = {}
 
 # Status → evento (quando negócio muda de status global)
 STATUS_EVENT_MAP = {
