@@ -602,7 +602,6 @@ async function loadStagesForMapping() {
     }
 
     // Get current stage_map from editing client
-    const editId = document.getElementById('cf-id').value;
     const currentClient = editId ? clients.find(c => c.id === editId) : null;
     const currentMap = currentClient?.crm_credentials?.stage_map || {};
 
@@ -697,7 +696,6 @@ async function loadFieldsForMapping() {
     }
 
     const fields = cachedLeadFields.fields || [];
-    const editId = document.getElementById('cf-id').value;
     const currentClient = editId ? clients.find(c => c.id === editId) : null;
     const currentFieldMap = currentClient?.crm_credentials?.field_map || {};
 

@@ -191,23 +191,26 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
             )
 
             # Salvar no banco
-            async with async_session() as db:
-                event = Event(
-                    client_id=client.id,
-                    event_type=event_type,
-                    event_data={
-                        "source": "crm_auto_sync",
-                        "business_id": biz.get("id"),
-                        "stage": stage_name,
-                        "status": status,
-                    },
-                    user_data=user_data,
-                    meta_response=meta_result.get("response", {}),
-                    status="sent" if meta_result["success"] else "error",
-                    error_message=meta_result.get("error"),
-                )
-                db.add(event)
-                await db.commit()
+            try:
+                async with async_session() as db:
+                    event = Event(
+                        client_id=client.id,
+                        event_type=event_type,
+                        event_data={
+                            "source": "crm_auto_sync",
+                            "business_id": biz.get("id"),
+                            "stage": stage_name,
+                            "status": status,
+                        },
+                        user_data=user_data,
+                        meta_response=meta_result.get("response", {}),
+                        status="sent" if meta_result["success"] else "error",
+                        error_message=meta_result.get("error"),
+                    )
+                    db.add(event)
+                    await db.commit()
+            except Exception as db_err:
+                logger.warning(f"[sync] DB save failed for {name} (client {client.id}): {db_err}")
 
             results.append({
                 "event_type": event_type,
