@@ -4,10 +4,11 @@ Polling: a cada 5 min, busca negócios que mudaram de stage e dispara eventos Me
 Sem depender de webhooks do CRM — nós puxamos.
 """
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session
@@ -165,6 +166,23 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
             custom_data["value"] = float(biz["total"])
             custom_data["currency"] = "BRL"
 
+        # Dedup: checar se já disparamos evento para este business_id + event_type
+        biz_id = biz.get("id", "")
+        dedup_key = f"{client.id}:{biz_id}:{event_type}"
+        try:
+            async with async_session() as db:
+                existing = await db.execute(
+                    text("SELECT id FROM events WHERE client_id = :cid AND event_data->>'business_id' = :bid AND event_type = :etype AND status = 'sent' LIMIT 1"),
+                    {"cid": str(client.id), "bid": str(biz_id), "etype": event_type}
+                )
+                if existing.scalar_one_or_none():
+                    continue  # Já disparado, skip
+        except Exception:
+            pass  # Se falhar a checagem, prosseguir (melhor duplicar que perder)
+
+        # Event ID determinístico para dedup no Meta (48h window)
+        deterministic_event_id = hashlib.sha256(dedup_key.encode()).hexdigest()[:32]
+
         # Disparar evento
         try:
             meta_result = await send_event(
@@ -173,6 +191,7 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
                 event_type=event_type,
                 user_data=user_data,
                 custom_data=custom_data or None,
+                event_id=deterministic_event_id,
             )
 
             # Salvar no banco

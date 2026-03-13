@@ -38,6 +38,7 @@ def build_event_payload(
     custom_data: dict | None = None,
     event_source_url: str | None = None,
     test_event_code: str | None = None,
+    event_id: str | None = None,
 ) -> dict:
     """Monta payload conforme spec Meta CAPI."""
     # Hash dos dados do usuário (PII — Meta exige SHA-256)
@@ -79,7 +80,7 @@ def build_event_payload(
     event = {
         "event_name": event_type,
         "event_time": int(time.time()),
-        "event_id": str(uuid.uuid4()),
+        "event_id": event_id or str(uuid.uuid4()),
         "action_source": "system_generated",
         "user_data": hashed_user,
     }
@@ -105,6 +106,7 @@ async def send_event(
     custom_data: dict | None = None,
     event_source_url: str | None = None,
     use_test_mode: bool = False,
+    event_id: str | None = None,
 ) -> dict:
     """Envia evento para Meta Conversions API.
 
@@ -119,6 +121,7 @@ async def send_event(
         custom_data=custom_data,
         event_source_url=event_source_url,
         test_event_code=test_code,
+        event_id=event_id,
     )
 
     url = f"{META_GRAPH_URL}/{pixel_id}/events"
