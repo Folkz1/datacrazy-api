@@ -510,6 +510,9 @@ function editClient(id) {
   document.getElementById('stage-mapping-section').classList.remove('hidden');
   document.getElementById('field-mapping-section').classList.remove('hidden');
   document.getElementById('client-form').classList.remove('hidden');
+  // Invalidate cache so it loads data for THIS client's CRM token
+  cachedPipelineStages = null;
+  cachedLeadFields = null;
   // Auto-load stages and fields if client has CRM configured
   if (c.crm_credentials?.stage_map || c.crm_credentials?.datacrazy_token) {
     loadStagesForMapping();
@@ -591,8 +594,11 @@ async function loadStagesForMapping() {
   list.innerHTML = '<p class="text-gray-400 text-sm">Carregando estágios...</p>';
 
   try {
+    // Pass client_id to use client-specific CRM token
+    const editId = document.getElementById('cf-id').value;
+    const clientParam = editId ? '?client_id=' + editId : '';
     if (!cachedPipelineStages) {
-      cachedPipelineStages = await api('/api/crm/pipelines');
+      cachedPipelineStages = await api('/api/crm/pipelines' + clientParam);
     }
 
     // Get current stage_map from editing client
@@ -683,8 +689,11 @@ async function loadFieldsForMapping() {
   list.innerHTML = '<p class="text-gray-400 text-sm">Carregando campos do CRM...</p>';
 
   try {
+    // Pass client_id to use client-specific CRM token
+    const editId = document.getElementById('cf-id').value;
+    const clientParam = editId ? '?client_id=' + editId : '';
     if (!cachedLeadFields) {
-      cachedLeadFields = await api('/api/crm/lead-fields');
+      cachedLeadFields = await api('/api/crm/lead-fields' + clientParam);
     }
 
     const fields = cachedLeadFields.fields || [];

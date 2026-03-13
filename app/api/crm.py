@@ -62,10 +62,18 @@ def _get_crm_client(token: str | None = None) -> DataCrazyClient:
 
 @router.get("/pipelines")
 async def list_pipelines(
+    client_id: uuid.UUID | None = Query(None, description="ID do cliente (usa token CRM do cliente se configurado)"),
+    db: AsyncSession = Depends(get_db),
     _: str = Depends(require_master_key),
 ):
     """Lista todos os pipelines do CRM com seus stages."""
-    dc = _get_crm_client()
+    token = None
+    if client_id:
+        result = await db.execute(select(Client).where(Client.id == client_id))
+        client = result.scalar_one_or_none()
+        if client and client.crm_credentials:
+            token = client.crm_credentials.get("datacrazy_token")
+    dc = _get_crm_client(token=token)
     pipelines = await dc.list_pipelines()
     result = []
     for p in pipelines:
@@ -83,10 +91,18 @@ async def list_pipelines(
 async def list_leads(
     search: str | None = Query(None, description="Buscar por nome/email/telefone"),
     limit: int = Query(50, le=200),
+    client_id: uuid.UUID | None = Query(None, description="ID do cliente (usa token CRM do cliente se configurado)"),
+    db: AsyncSession = Depends(get_db),
     _: str = Depends(require_master_key),
 ):
     """Lista leads do CRM com dados de contato."""
-    dc = _get_crm_client()
+    token = None
+    if client_id:
+        result = await db.execute(select(Client).where(Client.id == client_id))
+        client = result.scalar_one_or_none()
+        if client and client.crm_credentials:
+            token = client.crm_credentials.get("datacrazy_token")
+    dc = _get_crm_client(token=token)
     leads = await dc.list_leads(limit=limit)
     result = []
     for lead in leads:
@@ -119,10 +135,18 @@ async def list_leads(
 
 @router.get("/lead-fields")
 async def get_lead_fields(
+    client_id: uuid.UUID | None = Query(None, description="ID do cliente (usa token CRM do cliente se configurado)"),
+    db: AsyncSession = Depends(get_db),
     _: str = Depends(require_master_key),
 ):
     """Retorna todos os campos disponíveis de um lead real do CRM (para configurar mapeamento)."""
-    dc = _get_crm_client()
+    token = None
+    if client_id:
+        result = await db.execute(select(Client).where(Client.id == client_id))
+        client = result.scalar_one_or_none()
+        if client and client.crm_credentials:
+            token = client.crm_credentials.get("datacrazy_token")
+    dc = _get_crm_client(token=token)
     leads = await dc.list_leads(limit=5)
     if not leads:
         return {"fields": [], "sample": {}}
@@ -167,10 +191,18 @@ async def list_businesses(
     pipeline_id: str | None = Query(None, description="Filtrar por pipeline"),
     stage_id: str | None = Query(None, description="Filtrar por stage"),
     limit: int = Query(50, le=200),
+    client_id: uuid.UUID | None = Query(None, description="ID do cliente (usa token CRM do cliente se configurado)"),
+    db: AsyncSession = Depends(get_db),
     _: str = Depends(require_master_key),
 ):
     """Lista negócios/deals do CRM."""
-    dc = _get_crm_client()
+    token = None
+    if client_id:
+        result = await db.execute(select(Client).where(Client.id == client_id))
+        client = result.scalar_one_or_none()
+        if client and client.crm_credentials:
+            token = client.crm_credentials.get("datacrazy_token")
+    dc = _get_crm_client(token=token)
 
     stage_ids = None
     if stage_id:
