@@ -144,6 +144,11 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
             "first_name": name.split(" ")[0] or None,
             "last_name": " ".join(name.split(" ")[1:]) or None,
             "external_id": str(biz.get("leadId", "")),
+            "city": lead.get("city") or lead.get("cidade") or None,
+            "state": lead.get("state") or lead.get("estado") or lead.get("uf") or None,
+            "country": lead.get("country") or "br",
+            "zip_code": lead.get("zipCode") or lead.get("cep") or lead.get("postalCode") or None,
+            "date_of_birth": lead.get("birthDate") or lead.get("dateOfBirth") or lead.get("dataNascimento") or None,
         }
         user_data = {k: v for k, v in user_data.items() if v}
 

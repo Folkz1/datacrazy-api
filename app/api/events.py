@@ -92,6 +92,18 @@ async def webhook_receiver(
         "first_name": data.get("first_name") or data.get("name", "").split(" ")[0] if data.get("name") else None,
         "last_name": data.get("last_name") or (" ".join(data.get("name", "").split(" ")[1:]) if data.get("name") else None),
         "external_id": data.get("deal_id") or data.get("lead_id") or data.get("id"),
+        # Dados de localização (do CRM)
+        "city": data.get("city") or data.get("cidade"),
+        "state": data.get("state") or data.get("estado") or data.get("uf"),
+        "country": data.get("country") or "br",
+        "zip_code": data.get("zip_code") or data.get("cep") or data.get("postalCode"),
+        "date_of_birth": data.get("date_of_birth") or data.get("birthDate") or data.get("dataNascimento"),
+        # Dados de browser (de formulários web — melhoram match em até 32%)
+        "fbc": data.get("fbc"),
+        "fbp": data.get("fbp"),
+        "client_ip_address": data.get("client_ip_address") or data.get("ip"),
+        "client_user_agent": data.get("client_user_agent") or data.get("user_agent"),
+        "fb_login_id": data.get("fb_login_id"),
     }
 
     # Custom data (valor, moeda, etc)

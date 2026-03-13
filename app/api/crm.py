@@ -179,6 +179,11 @@ async def fire_event_from_crm(
             email, phone = _extract_contact(lead)
             user_data["email"] = email
             user_data["phone"] = phone
+            user_data["city"] = lead.get("city") or lead.get("cidade") or None
+            user_data["state"] = lead.get("state") or lead.get("estado") or lead.get("uf") or None
+            user_data["country"] = lead.get("country") or "br"
+            user_data["zip_code"] = lead.get("zipCode") or lead.get("cep") or lead.get("postalCode") or None
+            user_data["date_of_birth"] = lead.get("birthDate") or lead.get("dateOfBirth") or lead.get("dataNascimento") or None
 
         if biz.get("total"):
             custom_data["value"] = float(biz["total"])

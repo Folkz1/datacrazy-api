@@ -40,7 +40,7 @@ def build_event_payload(
     test_event_code: str | None = None,
 ) -> dict:
     """Monta payload conforme spec Meta CAPI."""
-    # Hash dos dados do usuário
+    # Hash dos dados do usuário (PII — Meta exige SHA-256)
     hashed_user = {}
     if user_data.get("email"):
         hashed_user["em"] = [hash_sha256(user_data["email"])]
@@ -57,8 +57,24 @@ def build_event_payload(
         hashed_user["st"] = [hash_sha256(user_data["state"])]
     if user_data.get("country"):
         hashed_user["country"] = [hash_sha256(user_data["country"])]
+    if user_data.get("zip_code"):
+        hashed_user["zp"] = [hash_sha256(user_data["zip_code"])]
+    if user_data.get("date_of_birth"):
+        hashed_user["db"] = [hash_sha256(user_data["date_of_birth"])]
     if user_data.get("external_id"):
         hashed_user["external_id"] = [hash_sha256(str(user_data["external_id"]))]
+
+    # Parâmetros de browser — NÃO são hasheados (fbc, fbp, IP, User Agent)
+    if user_data.get("fbc"):
+        hashed_user["fbc"] = user_data["fbc"]
+    if user_data.get("fbp"):
+        hashed_user["fbp"] = user_data["fbp"]
+    if user_data.get("client_ip_address"):
+        hashed_user["client_ip_address"] = user_data["client_ip_address"]
+    if user_data.get("client_user_agent"):
+        hashed_user["client_user_agent"] = user_data["client_user_agent"]
+    if user_data.get("fb_login_id"):
+        hashed_user["fb_login_id"] = user_data["fb_login_id"]
 
     event = {
         "event_name": event_type,
