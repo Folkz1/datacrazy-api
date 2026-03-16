@@ -67,10 +67,11 @@ async def health():
     dc_status = await dc.health_check()
     return {
         "status": "ok",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "datacrazy_integration": dc_status,
         "auto_sync": "active" if settings.datacrazy_api_token else "disabled",
         "meta_test_mode": bool(settings.meta_test_event_code),
+        "google_ga4": True,
         "ai_reports": bool(settings.anthropic_api_key),
     }
 

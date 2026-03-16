@@ -1,7 +1,7 @@
-# DataCrazy API — Meta Pixel + CRM Reports
+# DataCrazy API — Meta Pixel + Google GA4 + CRM Reports
 
 ## O que é
-Gateway de eventos CRM → Meta Conversions API + Relatórios inteligentes.
+Gateway de eventos CRM → Meta Conversions API + Google GA4 Measurement Protocol + Relatórios inteligentes.
 API-first: funciona com N8N, Lovable, curl, qualquer ferramenta.
 Cliente: Alan (DataCrazy) — R$2.500 por etapas.
 

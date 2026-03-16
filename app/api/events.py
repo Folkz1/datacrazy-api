@@ -12,7 +12,8 @@ from app.core.database import get_db
 from app.models.client import Client
 from app.models.event import Event
 from app.api.schemas import EventTrack, WebhookPayload, EventResponse
-from app.services.meta_capi import send_event
+from app.services.meta_capi import send_event as meta_send_event
+from app.services.google_capi import send_event as google_send_event
 
 router = APIRouter(prefix="/api/events", tags=["Events"])
 
@@ -114,14 +115,17 @@ async def webhook_receiver(
     if data.get("content_name") or data.get("produto"):
         custom_data["content_name"] = data.get("content_name") or data.get("produto")
 
-    # Fan-out: disparar para todos os pixels ativos
+    # Fan-out: disparar para todos os pixels ativos (Meta + Google)
     active_pixels = client.get_active_pixels()
-    if not active_pixels:
-        raise HTTPException(status_code=422, detail="Client has no active pixels configured")
+    active_google = client.get_active_google_pixels()
+    if not active_pixels and not active_google:
+        raise HTTPException(status_code=422, detail="Client has no active pixels configured (Meta or Google)")
 
     last_event = None
+
+    # Meta CAPI
     for pixel in active_pixels:
-        meta_result = await send_event(
+        meta_result = await meta_send_event(
             pixel_id=pixel["pixel_id"],
             access_token=pixel["access_token"],
             event_type=meta_event,
@@ -133,11 +137,36 @@ async def webhook_receiver(
             client_id=client.id,
             event_type=meta_event,
             event_data={"crm_event": body.event, "crm_data": body.data,
+                        "platform": "meta",
                         "pixel_id": pixel["pixel_id"], "pixel_label": pixel.get("label", "")},
             user_data=user_data,
             meta_response=meta_result.get("response", {}),
             status="sent" if meta_result["success"] else "error",
             error_message=meta_result.get("error"),
+        )
+        db.add(event)
+        last_event = event
+
+    # Google GA4
+    for gpixel in active_google:
+        google_result = await google_send_event(
+            measurement_id=gpixel["measurement_id"],
+            api_secret=gpixel["api_secret"],
+            event_type=meta_event,
+            user_data=user_data,
+            custom_data=custom_data or None,
+        )
+
+        event = Event(
+            client_id=client.id,
+            event_type=meta_event,
+            event_data={"crm_event": body.event, "crm_data": body.data,
+                        "platform": "google",
+                        "measurement_id": gpixel["measurement_id"], "pixel_label": gpixel.get("label", "")},
+            user_data=user_data,
+            meta_response=google_result.get("response", {}),
+            status="sent" if google_result["success"] else "error",
+            error_message=google_result.get("error"),
         )
         db.add(event)
         last_event = event
@@ -158,12 +187,15 @@ async def track_event(
     client = await _resolve_client(db, body.client_id, auth_client)
 
     active_pixels = client.get_active_pixels()
-    if not active_pixels:
-        raise HTTPException(status_code=422, detail="Client has no active pixels configured")
+    active_google = client.get_active_google_pixels()
+    if not active_pixels and not active_google:
+        raise HTTPException(status_code=422, detail="Client has no active pixels configured (Meta or Google)")
 
     last_event = None
+
+    # Meta CAPI
     for pixel in active_pixels:
-        meta_result = await send_event(
+        meta_result = await meta_send_event(
             pixel_id=pixel["pixel_id"],
             access_token=pixel["access_token"],
             event_type=body.event_type,
@@ -177,11 +209,37 @@ async def track_event(
             client_id=client.id,
             event_type=body.event_type,
             event_data={"source": "manual", "test_mode": body.test_mode,
+                        "platform": "meta",
                         "pixel_id": pixel["pixel_id"], "pixel_label": pixel.get("label", "")},
             user_data=body.user_data,
             meta_response=meta_result.get("response", {}),
             status="sent" if meta_result["success"] else "error",
             error_message=meta_result.get("error"),
+        )
+        db.add(event)
+        last_event = event
+
+    # Google GA4
+    for gpixel in active_google:
+        google_result = await google_send_event(
+            measurement_id=gpixel["measurement_id"],
+            api_secret=gpixel["api_secret"],
+            event_type=body.event_type,
+            user_data=body.user_data,
+            custom_data=body.custom_data,
+            debug_mode=body.test_mode,
+        )
+
+        event = Event(
+            client_id=client.id,
+            event_type=body.event_type,
+            event_data={"source": "manual", "test_mode": body.test_mode,
+                        "platform": "google",
+                        "measurement_id": gpixel["measurement_id"], "pixel_label": gpixel.get("label", "")},
+            user_data=body.user_data,
+            meta_response=google_result.get("response", {}),
+            status="sent" if google_result["success"] else "error",
+            error_message=google_result.get("error"),
         )
         db.add(event)
         last_event = event
