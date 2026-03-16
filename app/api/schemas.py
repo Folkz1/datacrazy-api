@@ -15,11 +15,20 @@ class PixelEntry(BaseModel):
     active: bool = Field(default=True, description="Pixel ativo ou inativo")
 
 
+class GooglePixelEntry(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="ID único")
+    measurement_id: str = Field(..., description="GA4 Measurement ID (G-XXXXXXX)")
+    api_secret: str = Field(..., description="GA4 Measurement Protocol API Secret")
+    label: str = Field(default="Principal", description="Label (ex: B2B, Lançamento)")
+    active: bool = Field(default=True, description="Pixel ativo ou inativo")
+
+
 class ClientCreate(BaseModel):
     name: str = Field(..., description="Nome do cliente")
     pixel_id: str = Field("", description="Meta Pixel ID (legado, usar pixels[])")
     meta_access_token: str = Field("", description="Meta Access Token (legado, usar pixels[])")
     pixels: list[PixelEntry] = Field(default=[], description="Lista de pixels Meta (multi-pixel)")
+    google_pixels: list[GooglePixelEntry] = Field(default=[], description="Lista de pixels Google GA4")
     events_enabled: list[str] = Field(default=["Purchase", "Lead"], description="Tipos de evento habilitados")
     crm_credentials: dict = Field(default={}, description="Credenciais do CRM (ex: datacrazy_token)")
 
@@ -29,6 +38,7 @@ class ClientUpdate(BaseModel):
     pixel_id: str | None = None
     meta_access_token: str | None = None
     pixels: list[PixelEntry] | None = None
+    google_pixels: list[GooglePixelEntry] | None = None
     events_enabled: list[str] | None = None
     crm_credentials: dict | None = None
     active: bool | None = None
@@ -40,6 +50,7 @@ class ClientResponse(BaseModel):
     pixel_id: str
     meta_access_token: str
     pixels: list[dict] = []
+    google_pixels: list[dict] = []
     events_enabled: list[str]
     active: bool
     api_key: str

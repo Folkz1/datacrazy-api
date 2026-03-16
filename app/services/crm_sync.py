@@ -15,7 +15,8 @@ from app.core.database import async_session
 from app.models.client import Client
 from app.models.event import Event
 from app.services.datacrazy_service import DataCrazyClient
-from app.services.meta_capi import send_event
+from app.services.meta_capi import send_event as meta_send_event
+from app.services.google_capi import send_event as google_send_event
 
 logger = logging.getLogger("crm_sync")
 
@@ -168,11 +169,13 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
 
         biz_id = biz.get("id", "")
 
-        # Fan-out: disparar para CADA pixel ativo do cliente
+        # Fan-out: disparar para CADA pixel ativo do cliente (Meta + Google)
         active_pixels = client.get_active_pixels()
-        if not active_pixels:
+        active_google = client.get_active_google_pixels()
+        if not active_pixels and not active_google:
             continue
 
+        # --- Meta CAPI ---
         for pixel in active_pixels:
             px_id = pixel["pixel_id"]
             px_token = pixel["access_token"]
@@ -201,7 +204,7 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
             deterministic_event_id = hashlib.sha256(dedup_key.encode()).hexdigest()[:32]
 
             try:
-                meta_result = await send_event(
+                meta_result = await meta_send_event(
                     pixel_id=px_id,
                     access_token=px_token,
                     event_type=event_type,
@@ -245,6 +248,79 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
 
             except Exception as e:
                 logger.error(f"[sync] Error firing event for {name} pixel {px_label}: {e}")
+
+        # --- Google GA4 ---
+        for gpixel in active_google:
+            gp_mid = gpixel["measurement_id"]
+            gp_secret = gpixel["api_secret"]
+            gp_label = gpixel.get("label", "")
+
+            # Dedup Google
+            dedup_key = f"{client.id}:{biz_id}:{event_type}:google:{gp_mid}"
+            try:
+                async with async_session() as db:
+                    existing = await db.execute(
+                        text("""SELECT id FROM events
+                               WHERE client_id = :cid
+                               AND event_data->>'business_id' = :bid
+                               AND event_type = :etype
+                               AND event_data->>'platform' = 'google'
+                               AND event_data->>'measurement_id' = :mid
+                               AND status = 'sent'
+                               LIMIT 1"""),
+                        {"cid": str(client.id), "bid": str(biz_id), "mid": gp_mid, "etype": event_type}
+                    )
+                    if existing.scalar_one_or_none():
+                        continue
+            except Exception:
+                pass
+
+            try:
+                google_result = await google_send_event(
+                    measurement_id=gp_mid,
+                    api_secret=gp_secret,
+                    event_type=event_type,
+                    user_data=user_data,
+                    custom_data=custom_data or None,
+                )
+
+                try:
+                    async with async_session() as db:
+                        event = Event(
+                            client_id=client.id,
+                            event_type=event_type,
+                            event_data={
+                                "source": "crm_auto_sync",
+                                "business_id": biz.get("id"),
+                                "platform": "google",
+                                "measurement_id": gp_mid,
+                                "pixel_label": gp_label,
+                                "stage": stage_name,
+                                "status": status,
+                            },
+                            user_data=user_data,
+                            meta_response=google_result.get("response", {}),
+                            status="sent" if google_result["success"] else "error",
+                            error_message=google_result.get("error"),
+                        )
+                        db.add(event)
+                        await db.commit()
+                except Exception as db_err:
+                    logger.warning(f"[sync] DB save failed for {name} google {gp_label} (client {client.id}): {db_err}")
+
+                results.append({
+                    "event_type": event_type,
+                    "lead_name": name,
+                    "stage": stage_name,
+                    "platform": "google",
+                    "measurement_id": gp_mid,
+                    "pixel_label": gp_label,
+                    "status": "sent" if google_result["success"] else "error",
+                    "business_id": biz.get("id"),
+                })
+
+            except Exception as e:
+                logger.error(f"[sync] Error firing Google event for {name} pixel {gp_label}: {e}")
 
     _last_check[client_id_str] = now
     return results

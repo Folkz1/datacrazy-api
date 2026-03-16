@@ -41,11 +41,14 @@ async def create_client(
         pixel_id = pixels[0]["pixel_id"]
         meta_access_token = pixels[0]["access_token"]
 
+    google_pixels = [p.model_dump() for p in body.google_pixels] if body.google_pixels else []
+
     client = Client(
         name=body.name,
         pixel_id=pixel_id or "",
         meta_access_token=meta_access_token or "",
         pixels=pixels,
+        google_pixels=google_pixels,
         events_enabled=body.events_enabled,
         crm_credentials=body.crm_credentials,
         api_key=generate_api_key(),
@@ -103,6 +106,12 @@ async def update_client(
             client.pixel_id = active[0]["pixel_id"]
             client.meta_access_token = active[0]["access_token"]
         del update_data["pixels"]
+
+    # Handle google_pixels update
+    if "google_pixels" in update_data and update_data["google_pixels"] is not None:
+        client.google_pixels = update_data["google_pixels"]
+        flag_modified(client, "google_pixels")
+        del update_data["google_pixels"]
 
     for field, value in update_data.items():
         setattr(client, field, value)
