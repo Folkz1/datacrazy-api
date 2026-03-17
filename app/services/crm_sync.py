@@ -1,7 +1,6 @@
 """Auto-sync CRM DataCrazy → Meta CAPI.
 
-Polling: a cada 5 min, busca negócios que mudaram de stage e dispara eventos Meta.
-Sem depender de webhooks do CRM — nós puxamos.
+Polling controlável: sync_enabled per-client, max_events limit, pause/resume global.
 """
 import asyncio
 import hashlib
@@ -20,45 +19,55 @@ from app.services.google_capi import send_event as google_send_event
 
 logger = logging.getLogger("crm_sync")
 
-# State: última checagem por client_id
+# State
 _last_check: dict[str, str] = {}
+_cron_paused = False  # Global pause flag
 
-# Sem mapeamento padrão — só dispara eventos para stages explicitamente configurados pelo cliente
 DEFAULT_STAGE_MAP = {}
 
-# Status → evento (quando negócio muda de status global)
 STATUS_EVENT_MAP = {
     "won": "Purchase",
-    "lost": None,  # não dispara
+    "lost": None,
 }
+
+# --- Control API ---
+
+def is_cron_paused() -> bool:
+    return _cron_paused
+
+def pause_cron():
+    global _cron_paused
+    _cron_paused = True
+
+def resume_cron():
+    global _cron_paused
+    _cron_paused = False
+
+def reset_last_check(client_id: str | None = None):
+    """Reset last_check to re-process all businesses."""
+    if client_id:
+        _last_check.pop(client_id, None)
+    else:
+        _last_check.clear()
 
 
 def _resolve_event_type(stage_name: str, status: str, client_stage_map: dict | None = None) -> str | None:
-    """Resolve qual evento Meta disparar baseado no stage/status do deal."""
-    # Status global tem prioridade
     if status == "won":
         return "Purchase"
     if status == "lost":
         return None
-
-    # Mapa customizado do cliente (se configurado)
     if client_stage_map:
         for key, event in client_stage_map.items():
             if key.lower() in stage_name.lower():
                 return event
-
-    # Mapa padrão
     stage_lower = stage_name.lower().strip()
     for key, event in DEFAULT_STAGE_MAP.items():
         if key in stage_lower:
             return event
-
     return None
 
 
 def _resolve_field(data: dict, field_path: str | None) -> str | None:
-    """Resolve um campo pelo path configurado (ex: 'address.city', 'customFields.cep').
-    Retorna None se path não existe ou valor vazio."""
     if not field_path or not data:
         return None
     parts = field_path.replace("[0]", ".0").split(".")
@@ -79,10 +88,8 @@ def _resolve_field(data: dict, field_path: str | None) -> str | None:
 
 
 def _extract_contact(lead: dict) -> tuple[str | None, str | None]:
-    """Extract email and phone from lead data."""
     email = lead.get("email") or None
     phone = lead.get("phone") or lead.get("rawPhone") or None
-
     for c in lead.get("contacts", []):
         platform = (c.get("platform") or c.get("type") or "").upper()
         value = c.get("value") or c.get("contactId") or c.get("rawValue")
@@ -90,21 +97,19 @@ def _extract_contact(lead: dict) -> tuple[str | None, str | None]:
             email = value
         if platform in ("WHATSAPP", "PHONE", "MOBILE") and not phone:
             phone = value
-
     return email if email else None, phone if phone else None
 
 
-async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]:
-    """Sync um cliente: busca deals que mudaram e dispara eventos.
+async def sync_client(client: Client, stage_names: dict[str, str], max_events: int = 0) -> list[dict]:
+    """Sync um cliente. max_events=0 means unlimited."""
+    # Check per-client sync settings
+    sync_settings = (client.crm_credentials or {}).get("sync_settings", {})
+    if not sync_settings.get("sync_enabled", False):
+        return []
 
-    Args:
-        client: Client do nosso sistema (com pixel_id, meta_access_token)
-        stage_names: Mapa de stage_id → stage_name (pré-carregado)
+    client_max = sync_settings.get("sync_max_events", 10)
+    effective_max = max_events if max_events > 0 else client_max
 
-    Returns:
-        Lista de resultados [{event_type, lead_name, status, ...}]
-    """
-    # Use per-client CRM token if available, fallback to global
     client_token = (client.crm_credentials or {}).get("datacrazy_token")
     dc = DataCrazyClient(token=client_token)
     if not dc.configured:
@@ -112,8 +117,6 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
 
     client_id_str = str(client.id)
     now = datetime.now(timezone.utc).isoformat()
-
-    # Buscar deals movidos desde última checagem
     last = _last_check.get(client_id_str)
 
     try:
@@ -122,27 +125,29 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
             last_moved_after=last,
         )
     except Exception as e:
-        logger.error(f"[sync] Error fetching businesses: {e}")
+        logger.error(f"[sync] Error fetching businesses for {client.name}: {e}")
         return []
 
     results = []
 
     for biz in businesses:
+        # Check limit
+        if effective_max > 0 and len(results) >= effective_max:
+            logger.info(f"[sync] Hit max_events limit ({effective_max}) for {client.name}")
+            break
+
         stage_id = biz.get("stageId", "")
         stage_name = stage_names.get(stage_id, "")
         status = biz.get("status", "in_process")
 
-        # Determinar evento
         custom_map = (client.crm_credentials or {}).get("stage_map")
         event_type = _resolve_event_type(stage_name, status, custom_map)
         if not event_type:
             continue
 
-        # Verificar se evento está habilitado
         if event_type not in client.events_enabled:
             continue
 
-        # Extrair dados do lead
         lead = biz.get("lead", {}) or {}
         email, phone = _extract_contact(lead)
         if not email and not phone:
@@ -171,7 +176,6 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
 
         biz_id = biz.get("id", "")
 
-        # Fan-out: disparar para CADA pixel ativo do cliente (Meta + Google)
         active_pixels = client.get_active_pixels()
         active_google = client.get_active_google_pixels()
         if not active_pixels and not active_google:
@@ -179,27 +183,35 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
 
         # --- Meta CAPI ---
         for pixel in active_pixels:
+            if effective_max > 0 and len(results) >= effective_max:
+                break
+
             px_id = pixel["pixel_id"]
             px_token = pixel["access_token"]
             px_label = pixel.get("label", "")
 
-            # Dedup inclui pixel_id para não pular segundo pixel do mesmo deal
-            # Also checks legacy events WITHOUT pixel_id (backward compat)
+            # Dedup: skip if already sent OR if error was auth/token (no point retrying)
             dedup_key = f"{client.id}:{biz_id}:{event_type}:{px_id}"
             try:
                 async with async_session() as db:
                     existing = await db.execute(
-                        text("""SELECT id FROM events
+                        text("""SELECT id, status, error_message FROM events
                                WHERE client_id = :cid
                                AND event_data->>'business_id' = :bid
                                AND event_type = :etype
-                               AND status = 'sent'
                                AND (event_data->>'pixel_id' = :pid OR event_data->>'pixel_id' IS NULL)
                                LIMIT 1"""),
                         {"cid": str(client.id), "bid": str(biz_id), "pid": px_id, "etype": event_type}
                     )
-                    if existing.scalar_one_or_none():
-                        continue  # Já disparado para este pixel (ou sem pixel = legado)
+                    row = existing.first()
+                    if row:
+                        # Skip if sent successfully
+                        if row.status == "sent":
+                            continue
+                        # Skip if error was auth/token (don't retry until token renewed)
+                        err_msg = row.error_message or ""
+                        if "access token" in err_msg.lower() or "session has expired" in err_msg.lower():
+                            continue
             except Exception:
                 pass
 
@@ -236,7 +248,7 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
                         db.add(event)
                         await db.commit()
                 except Exception as db_err:
-                    logger.warning(f"[sync] DB save failed for {name} pixel {px_label} (client {client.id}): {db_err}")
+                    logger.warning(f"[sync] DB save failed for {name} pixel {px_label}: {db_err}")
 
                 results.append({
                     "event_type": event_type,
@@ -253,27 +265,33 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
 
         # --- Google GA4 ---
         for gpixel in active_google:
+            if effective_max > 0 and len(results) >= effective_max:
+                break
+
             gp_mid = gpixel["measurement_id"]
             gp_secret = gpixel["api_secret"]
             gp_label = gpixel.get("label", "")
 
-            # Dedup Google
             dedup_key = f"{client.id}:{biz_id}:{event_type}:google:{gp_mid}"
             try:
                 async with async_session() as db:
                     existing = await db.execute(
-                        text("""SELECT id FROM events
+                        text("""SELECT id, status, error_message FROM events
                                WHERE client_id = :cid
                                AND event_data->>'business_id' = :bid
                                AND event_type = :etype
                                AND event_data->>'platform' = 'google'
                                AND event_data->>'measurement_id' = :mid
-                               AND status = 'sent'
                                LIMIT 1"""),
                         {"cid": str(client.id), "bid": str(biz_id), "mid": gp_mid, "etype": event_type}
                     )
-                    if existing.scalar_one_or_none():
-                        continue
+                    row = existing.first()
+                    if row:
+                        if row.status == "sent":
+                            continue
+                        err_msg = row.error_message or ""
+                        if "access token" in err_msg.lower() or "session has expired" in err_msg.lower():
+                            continue
             except Exception:
                 pass
 
@@ -308,7 +326,7 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
                         db.add(event)
                         await db.commit()
                 except Exception as db_err:
-                    logger.warning(f"[sync] DB save failed for {name} google {gp_label} (client {client.id}): {db_err}")
+                    logger.warning(f"[sync] DB save failed for {name} google {gp_label}: {db_err}")
 
                 results.append({
                     "event_type": event_type,
@@ -328,9 +346,11 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
     return results
 
 
-async def run_sync_all() -> dict:
-    """Roda sync para TODOS os clientes ativos. Chamado pelo cron."""
-    # Buscar clientes ativos
+async def run_sync_all(max_events: int = 0) -> dict:
+    """Roda sync para TODOS os clientes ativos. Chamado pelo cron ou manual."""
+    if _cron_paused:
+        return {"status": "paused", "reason": "Cron is paused globally"}
+
     async with async_session() as db:
         result = await db.execute(select(Client).where(Client.active == True))
         active_clients = result.scalars().all()
@@ -341,7 +361,6 @@ async def run_sync_all() -> dict:
     all_results = {}
     total_stages = 0
     for client in active_clients:
-        # Load pipelines per-client (each may have own CRM token)
         client_token = (client.crm_credentials or {}).get("datacrazy_token")
         dc = DataCrazyClient(token=client_token)
         if not dc.configured:
@@ -359,7 +378,7 @@ async def run_sync_all() -> dict:
             logger.error(f"[sync] Failed to load pipelines for {client.name}: {e}")
             continue
 
-        results = await sync_client(client, stage_names)
+        results = await sync_client(client, stage_names, max_events=max_events)
         if results:
             all_results[client.name] = results
 
@@ -373,21 +392,20 @@ async def run_sync_all() -> dict:
 
 
 async def _cron_loop():
-    """Loop infinito que roda sync a cada 5 minutos."""
+    """Loop que roda sync a cada 5 minutos (respects pause)."""
     logger.info("[crm_sync] Cron started — polling every 5 minutes")
     while True:
-        try:
-            result = await run_sync_all()
-            fired = result.get("events_fired", 0)
-            if fired > 0:
-                logger.info(f"[crm_sync] Fired {fired} events")
-            else:
-                logger.debug(f"[crm_sync] No new events")
-        except Exception as e:
-            logger.error(f"[crm_sync] Error: {e}")
-        await asyncio.sleep(300)  # 5 minutos
+        if not _cron_paused:
+            try:
+                result = await run_sync_all()
+                fired = result.get("events_fired", 0)
+                if fired > 0:
+                    logger.info(f"[crm_sync] Fired {fired} events")
+            except Exception as e:
+                logger.error(f"[crm_sync] Error: {e}")
+        await asyncio.sleep(300)
 
 
 def start_cron():
-    """Inicia o cron em background. Chamar no lifespan do FastAPI."""
+    """Inicia o cron em background."""
     asyncio.create_task(_cron_loop())

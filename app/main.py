@@ -18,7 +18,7 @@ from app.core.database import init_db
 from app.core.config import settings
 from app.api import clients, events, reports, crm, config
 from app.services.datacrazy_service import DataCrazyClient
-from app.services.crm_sync import start_cron, run_sync_all
+from app.services.crm_sync import start_cron, run_sync_all, pause_cron, resume_cron, is_cron_paused, reset_last_check
 
 
 @asynccontextmanager
@@ -70,7 +70,7 @@ async def health():
         "status": "ok",
         "version": "1.2.0",
         "datacrazy_integration": dc_status,
-        "auto_sync": "active" if settings.datacrazy_api_token else "disabled",
+        "auto_sync": "paused" if is_cron_paused() else ("active" if settings.datacrazy_api_token else "disabled"),
         "meta_test_mode": bool(settings.meta_test_event_code),
         "google_ga4": True,
         "ai_reports": bool(settings.anthropic_api_key),
@@ -78,7 +78,28 @@ async def health():
 
 
 @app.post("/api/sync", tags=["System"])
-async def manual_sync():
-    """Força sync manual — busca mudanças no CRM e dispara eventos Meta."""
-    result = await run_sync_all()
+async def manual_sync(max_events: int = 0):
+    """Força sync manual. max_events limita quantos eventos disparar (0 = usa config do client)."""
+    result = await run_sync_all(max_events=max_events)
     return result
+
+
+@app.post("/api/sync/pause", tags=["System"])
+async def sync_pause():
+    """Pausa o cron de sync automático (5 min). Sync manual ainda funciona."""
+    pause_cron()
+    return {"status": "paused", "message": "Cron auto-sync pausado. Use POST /api/sync para sync manual."}
+
+
+@app.post("/api/sync/resume", tags=["System"])
+async def sync_resume():
+    """Retoma o cron de sync automático."""
+    resume_cron()
+    return {"status": "active", "message": "Cron auto-sync retomado (a cada 5 min)."}
+
+
+@app.post("/api/sync/reset", tags=["System"])
+async def sync_reset(client_id: str | None = None):
+    """Reset do last_check — próximo sync re-processa todos os businesses."""
+    reset_last_check(client_id)
+    return {"status": "ok", "message": f"Last check resetado {'para ' + client_id if client_id else 'globalmente'}"}
