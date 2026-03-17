@@ -104,7 +104,9 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
     Returns:
         Lista de resultados [{event_type, lead_name, status, ...}]
     """
-    dc = DataCrazyClient()
+    # Use per-client CRM token if available, fallback to global
+    client_token = (client.crm_credentials or {}).get("datacrazy_token")
+    dc = DataCrazyClient(token=client_token)
     if not dc.configured:
         return []
 
@@ -328,28 +330,35 @@ async def sync_client(client: Client, stage_names: dict[str, str]) -> list[dict]
 
 async def run_sync_all() -> dict:
     """Roda sync para TODOS os clientes ativos. Chamado pelo cron."""
-    dc = DataCrazyClient()
-    if not dc.configured:
-        return {"status": "skipped", "reason": "CRM not configured"}
-
-    # Carregar todos os stage names (uma vez)
-    stage_names = {}
-    try:
-        pipelines = await dc.list_pipelines()
-        for p in pipelines:
-            stages = await dc.get_pipeline_stages(str(p["id"]))
-            for s in stages:
-                stage_names[s["id"]] = s.get("name", "")
-    except Exception as e:
-        return {"status": "error", "reason": f"Failed to load pipelines: {e}"}
-
     # Buscar clientes ativos
     async with async_session() as db:
         result = await db.execute(select(Client).where(Client.active == True))
         active_clients = result.scalars().all()
 
+    if not active_clients:
+        return {"status": "skipped", "reason": "No active clients"}
+
     all_results = {}
+    total_stages = 0
     for client in active_clients:
+        # Load pipelines per-client (each may have own CRM token)
+        client_token = (client.crm_credentials or {}).get("datacrazy_token")
+        dc = DataCrazyClient(token=client_token)
+        if not dc.configured:
+            continue
+
+        stage_names = {}
+        try:
+            pipelines = await dc.list_pipelines()
+            for p in pipelines:
+                stages = await dc.get_pipeline_stages(str(p["id"]))
+                for s in stages:
+                    stage_names[s["id"]] = s.get("name", "")
+            total_stages = max(total_stages, len(stage_names))
+        except Exception as e:
+            logger.error(f"[sync] Failed to load pipelines for {client.name}: {e}")
+            continue
+
         results = await sync_client(client, stage_names)
         if results:
             all_results[client.name] = results
@@ -357,7 +366,7 @@ async def run_sync_all() -> dict:
     return {
         "status": "ok",
         "clients_checked": len(active_clients),
-        "stages_loaded": len(stage_names),
+        "stages_loaded": total_stages,
         "events_fired": sum(len(r) for r in all_results.values()),
         "details": all_results,
     }
