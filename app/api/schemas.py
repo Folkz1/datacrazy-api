@@ -107,6 +107,24 @@ class EventResponse(BaseModel):
 
 # === Reports ===
 
+# === Config (Self-Service) ===
+
+class ConfigResponse(BaseModel):
+    client_id: uuid.UUID
+    name: str
+    pixels: list[dict] = []
+    google_pixels: list[dict] = []
+    events_enabled: list[str] = ["Purchase", "Lead"]
+
+
+class ConfigUpdate(BaseModel):
+    pixels: list[PixelEntry] | None = Field(None, description="Lista de pixels Meta")
+    google_pixels: list[GooglePixelEntry] | None = Field(None, description="Lista de pixels GA4")
+    events_enabled: list[str] | None = Field(None, description="Tipos de evento habilitados")
+
+
+# === Reports ===
+
 class ReportGenerate(BaseModel):
     client_id: uuid.UUID
     period_days: int = Field(7, description="Período em dias (padrão: 7)")
