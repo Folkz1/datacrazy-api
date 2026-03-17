@@ -79,8 +79,9 @@ async def health():
 
 @app.post("/api/sync", tags=["System"])
 async def manual_sync(max_events: int = 0):
-    """Força sync manual. max_events limita quantos eventos disparar (0 = usa config do client)."""
-    result = await run_sync_all(max_events=max_events)
+    """Força sync manual. max_events limita quantos eventos disparar (0 = usa config do client).
+    Funciona mesmo com cron pausado."""
+    result = await run_sync_all(max_events=max_events, force=True)
     return result
 
 
