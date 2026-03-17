@@ -346,9 +346,9 @@ async def sync_client(client: Client, stage_names: dict[str, str], max_events: i
     return results
 
 
-async def run_sync_all(max_events: int = 0) -> dict:
-    """Roda sync para TODOS os clientes ativos. Chamado pelo cron ou manual."""
-    if _cron_paused:
+async def run_sync_all(max_events: int = 0, force: bool = False) -> dict:
+    """Roda sync para TODOS os clientes ativos. force=True ignora pause (manual sync)."""
+    if _cron_paused and not force:
         return {"status": "paused", "reason": "Cron is paused globally"}
 
     async with async_session() as db:
