@@ -69,11 +69,29 @@ class DataCrazyClient:
             resp.raise_for_status()
             return resp.json()
 
-    async def list_leads(self, limit: int = 50) -> list:
+    async def list_leads(self, limit: int = 50, fetch_all: bool = False) -> list:
         async with httpx.AsyncClient(timeout=30, headers=self.headers) as client:
-            resp = await client.get(f"{self.base_url}/api/v1/leads", params={"limit": limit})
-            resp.raise_for_status()
-            return self._extract_data(resp.json())
+            if not fetch_all:
+                resp = await client.get(f"{self.base_url}/api/v1/leads", params={"take": limit})
+                resp.raise_for_status()
+                return self._extract_data(resp.json())
+            # Paginate to get all leads
+            all_leads = []
+            skip = 0
+            page_size = 100
+            while True:
+                resp = await client.get(f"{self.base_url}/api/v1/leads", params={"take": page_size, "skip": skip})
+                resp.raise_for_status()
+                raw = resp.json()
+                data = raw.get("data", raw) if isinstance(raw, dict) else raw
+                if not data:
+                    break
+                all_leads.extend(data)
+                total = raw.get("count", 0) if isinstance(raw, dict) else 0
+                skip += page_size
+                if skip >= total or len(data) < page_size:
+                    break
+            return all_leads
 
     async def health_check(self) -> dict:
         """Testa conexão com DataCrazy API."""
