@@ -81,6 +81,39 @@
       <div id="recent-events" class="space-y-2 max-h-64 overflow-y-auto"></div>
     </div>
   </div>
+
+  <!-- Sync Controls -->
+  <div class="card mt-4">
+    <div class="flex justify-between items-center mb-4">
+      <div class="flex items-center gap-3">
+        <h3 class="text-sm font-semibold text-gray-400">Auto-Sync CRM</h3>
+        <span id="sync-status-badge" class="badge badge-yellow">Carregando...</span>
+      </div>
+    </div>
+    <div class="grid grid-cols-4 gap-3">
+      <!-- Sync Manual com quantidade -->
+      <div class="col-span-2 flex items-end gap-2">
+        <div class="flex-1">
+          <label class="text-xs text-gray-400">Quantidade de eventos</label>
+          <input id="sync-max-events" type="number" class="w-full" value="1" min="0" placeholder="0 = todos">
+        </div>
+        <button onclick="runManualSync()" id="btn-sync" class="btn btn-primary shrink-0">Sync Manual</button>
+      </div>
+      <!-- Controles -->
+      <div class="flex flex-col gap-2">
+        <button onclick="toggleSync()" id="btn-toggle-sync" class="btn btn-ghost text-xs w-full">Pausar Sync</button>
+        <button onclick="resetSync()" class="btn btn-ghost text-xs w-full">Reset Checkpoint</button>
+      </div>
+      <!-- Info -->
+      <div class="text-xs text-gray-500 flex flex-col justify-center">
+        <p>Sync a cada 5 min puxa leads do CRM e dispara eventos Meta/GA4.</p>
+        <p class="mt-1"><b>Quantidade 1</b> = testa com 1 evento. <b>0</b> = processa todos.</p>
+      </div>
+    </div>
+    <div id="sync-result" class="mt-3 hidden">
+      <pre id="sync-result-content" class="bg-surface rounded-lg p-3 text-xs font-mono text-gray-300 overflow-auto max-h-40"></pre>
+    </div>
+  </div>
 </main>
 
 <!-- Clients Tab -->
@@ -376,6 +409,7 @@ Headers: { "X-API-Key": "dc_xxxxx" }
 let API = '';
 let KEY = '';
 let clients = [];
+let syncActive = true;
 
 // --- Connection ---
 async function connect() {
@@ -387,6 +421,7 @@ async function connect() {
     document.getElementById('health-text').textContent = 'Conectado | v' + r.version;
     document.getElementById('health-text').className = 'text-xs text-green-400';
     toast('Conectado com sucesso!', 'green');
+    updateSyncStatus(r.auto_sync);
     loadDashboard();
     loadClients();
   } catch (e) {
@@ -959,6 +994,72 @@ async function fireTestEvent() {
   }
   btn.disabled = false;
   btn.textContent = 'Disparar Evento';
+}
+
+// --- Sync Controls ---
+function updateSyncStatus(status) {
+  syncActive = status === 'active';
+  const badge = document.getElementById('sync-status-badge');
+  const btn = document.getElementById('btn-toggle-sync');
+  if (syncActive) {
+    badge.className = 'badge badge-green';
+    badge.textContent = 'Ativo (5 min)';
+    btn.textContent = 'Pausar Sync';
+    btn.className = 'btn btn-ghost text-xs w-full';
+  } else if (status === 'paused') {
+    badge.className = 'badge badge-yellow';
+    badge.textContent = 'Pausado';
+    btn.textContent = 'Retomar Sync';
+    btn.className = 'btn btn-primary text-xs w-full';
+  } else {
+    badge.className = 'badge badge-red';
+    badge.textContent = 'Desabilitado';
+    btn.textContent = 'Sync Desabilitado';
+    btn.disabled = true;
+  }
+}
+
+async function toggleSync() {
+  try {
+    const endpoint = syncActive ? '/api/sync/pause' : '/api/sync/resume';
+    const r = await api(endpoint, { method: 'POST' });
+    updateSyncStatus(r.status);
+    toast(r.message, 'green');
+  } catch (e) { toast('Erro: ' + e.message, 'red'); }
+}
+
+async function resetSync() {
+  if (!confirm('Resetar checkpoint? O proximo sync vai re-processar TODOS os negocios do CRM.')) return;
+  try {
+    const r = await api('/api/sync/reset', { method: 'POST' });
+    toast(r.message, 'green');
+  } catch (e) { toast('Erro: ' + e.message, 'red'); }
+}
+
+async function runManualSync() {
+  const btn = document.getElementById('btn-sync');
+  const maxEvents = parseInt(document.getElementById('sync-max-events').value) || 0;
+  btn.disabled = true;
+  btn.textContent = 'Sincronizando...';
+  const resultDiv = document.getElementById('sync-result');
+  const resultContent = document.getElementById('sync-result-content');
+  resultDiv.classList.remove('hidden');
+  resultContent.textContent = 'Processando...';
+
+  try {
+    const r = await api('/api/sync?max_events=' + maxEvents, { method: 'POST' });
+    resultContent.textContent = JSON.stringify(r, null, 2);
+    resultContent.className = 'bg-surface rounded-lg p-3 text-xs font-mono overflow-auto max-h-40 text-green-300';
+    toast('Sync manual concluido!', 'green');
+    loadDashboard();
+    loadEvents();
+  } catch (e) {
+    resultContent.textContent = 'ERRO: ' + e.message;
+    resultContent.className = 'bg-surface rounded-lg p-3 text-xs font-mono overflow-auto max-h-40 text-red-300';
+    toast('Erro no sync: ' + e.message, 'red');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Sync Manual';
 }
 
 // --- Tabs ---
