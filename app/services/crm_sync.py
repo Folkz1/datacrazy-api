@@ -626,6 +626,22 @@ async def run_full_sync(client_id: str):
     _full_sync_status[client_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
     logger.info(f"[full_sync] Completed for {client.name}: {_full_sync_status[client_id]}")
 
+    # Mark full_sync_completed in client crm_credentials
+    try:
+        async with async_session() as db:
+            result = await db.execute(select(Client).where(Client.id == client_id))
+            c = result.scalar_one_or_none()
+            if c:
+                creds = dict(c.crm_credentials or {})
+                ss = dict(creds.get("sync_settings", {}))
+                ss["full_sync_completed"] = True
+                ss["full_sync_completed_at"] = datetime.now(timezone.utc).isoformat()
+                creds["sync_settings"] = ss
+                c.crm_credentials = creds
+                await db.commit()
+    except Exception as e:
+        logger.warning(f"[full_sync] Failed to mark completed: {e}")
+
 
 def start_cron():
     """Inicia o cron em background."""
