@@ -407,6 +407,226 @@ async def _cron_loop():
         await asyncio.sleep(300)
 
 
+# --- Full Sync (historical) ---
+
+_full_sync_status: dict[str, dict] = {}  # client_id -> {status, processed, total, errors, started_at}
+
+
+def get_full_sync_status(client_id: str | None = None) -> dict:
+    if client_id:
+        return _full_sync_status.get(client_id, {"status": "idle"})
+    return _full_sync_status
+
+
+async def run_full_sync(client_id: str):
+    """Sync completo do histórico — pagina todos os deals, processa em background.
+    Rate limit: 10 páginas por minuto (1 a cada 6s)."""
+    from app.models.client import Client
+
+    async with async_session() as db:
+        result = await db.execute(select(Client).where(Client.id == client_id, Client.active == True))
+        client = result.scalar_one_or_none()
+        if not client:
+            _full_sync_status[client_id] = {"status": "error", "message": "Client not found"}
+            return
+
+    client_token = (client.crm_credentials or {}).get("datacrazy_token")
+    dc = DataCrazyClient(token=client_token)
+    if not dc.configured:
+        _full_sync_status[client_id] = {"status": "error", "message": "CRM token not configured"}
+        return
+
+    # Load stage names
+    stage_names = {}
+    try:
+        pipelines = await dc.list_pipelines()
+        for p in pipelines:
+            stages = await dc.get_pipeline_stages(str(p["id"]))
+            for s in stages:
+                stage_names[s["id"]] = s.get("name", "")
+    except Exception as e:
+        _full_sync_status[client_id] = {"status": "error", "message": f"Failed to load pipelines: {e}"}
+        return
+
+    # Get total count
+    try:
+        first_page = await dc.list_businesses(limit=1)
+    except Exception:
+        first_page = []
+
+    # Estimate total from CRM
+    total_estimate = 0
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=30, headers={"Authorization": f"Bearer {client_token}"}) as http:
+            resp = await http.get(f"{dc.base_url}/api/v1/businesses", params={"take": 1})
+            raw = resp.json()
+            total_estimate = raw.get("count", 0)
+    except Exception:
+        total_estimate = 0
+
+    _full_sync_status[client_id] = {
+        "status": "running",
+        "processed": 0,
+        "fired": 0,
+        "skipped": 0,
+        "total": total_estimate,
+        "errors": 0,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    custom_map = (client.crm_credentials or {}).get("stage_map")
+    if not custom_map:
+        _full_sync_status[client_id] = {"status": "error", "message": "No stage_map configured"}
+        return
+
+    skip = 0
+    page_size = 100
+    pages_this_minute = 0
+
+    while True:
+        # Rate limit: 10 pages per minute
+        if pages_this_minute >= 10:
+            await asyncio.sleep(60)
+            pages_this_minute = 0
+
+        try:
+            businesses = await dc.list_businesses(limit=page_size, skip=skip)
+        except Exception as e:
+            _full_sync_status[client_id]["errors"] += 1
+            logger.error(f"[full_sync] Error fetching page skip={skip}: {e}")
+            await asyncio.sleep(6)
+            pages_this_minute += 1
+            skip += page_size
+            continue
+
+        if not businesses:
+            break
+
+        pages_this_minute += 1
+
+        for biz in businesses:
+            _full_sync_status[client_id]["processed"] += 1
+
+            stage_id = biz.get("stageId", "")
+            stage_name = stage_names.get(stage_id, "")
+            status = biz.get("status", "in_process")
+
+            event_type = _resolve_event_type(stage_name, status, custom_map)
+            if not event_type:
+                _full_sync_status[client_id]["skipped"] += 1
+                continue
+
+            if event_type not in client.events_enabled:
+                _full_sync_status[client_id]["skipped"] += 1
+                continue
+
+            lead = biz.get("lead", {}) or {}
+            email, phone = _extract_contact(lead)
+            if not email and not phone:
+                _full_sync_status[client_id]["skipped"] += 1
+                continue
+
+            biz_id = biz.get("id", "")
+            active_pixels = client.get_active_pixels()
+
+            for pixel in active_pixels:
+                px_id = pixel["pixel_id"]
+                px_token = pixel["access_token"]
+
+                # Dedup
+                try:
+                    async with async_session() as db:
+                        existing = await db.execute(
+                            text("""SELECT id, status, error_message FROM events
+                                   WHERE client_id = :cid
+                                   AND event_data->>'business_id' = :bid
+                                   AND event_type = :etype
+                                   AND (event_data->>'pixel_id' = :pid OR event_data->>'pixel_id' IS NULL)
+                                   LIMIT 1"""),
+                            {"cid": str(client.id), "bid": str(biz_id), "pid": px_id, "etype": event_type}
+                        )
+                        row = existing.first()
+                        if row:
+                            if row.status == "sent":
+                                continue
+                            err_msg = row.error_message or ""
+                            if "access token" in err_msg.lower() or "session has expired" in err_msg.lower():
+                                continue
+                except Exception:
+                    pass
+
+                name = lead.get("name") or ""
+                field_map = (client.crm_credentials or {}).get("field_map", {})
+                user_data = {
+                    "email": email,
+                    "phone": phone,
+                    "first_name": name.split(" ")[0] or None,
+                    "last_name": " ".join(name.split(" ")[1:]) or None,
+                    "external_id": str(biz.get("leadId", "")),
+                    "country": "br",
+                }
+                user_data = {k: v for k, v in user_data.items() if v}
+
+                custom_data = {}
+                if biz.get("total"):
+                    custom_data["value"] = float(biz["total"])
+                    custom_data["currency"] = "BRL"
+
+                dedup_key = f"{client.id}:{biz_id}:{event_type}:{px_id}"
+                deterministic_event_id = hashlib.sha256(dedup_key.encode()).hexdigest()[:32]
+
+                try:
+                    meta_result = await meta_send_event(
+                        pixel_id=px_id,
+                        access_token=px_token,
+                        event_type=event_type,
+                        user_data=user_data,
+                        custom_data=custom_data or None,
+                        event_id=deterministic_event_id,
+                    )
+
+                    async with async_session() as db:
+                        event = Event(
+                            client_id=client.id,
+                            event_type=event_type,
+                            event_data={
+                                "source": "full_sync",
+                                "business_id": biz_id,
+                                "pixel_id": px_id,
+                                "pixel_label": pixel.get("label", ""),
+                                "stage": stage_name,
+                                "status": status,
+                            },
+                            user_data=user_data,
+                            meta_response=meta_result.get("response", {}),
+                            status="sent" if meta_result["success"] else "error",
+                            error_message=meta_result.get("error"),
+                        )
+                        db.add(event)
+                        await db.commit()
+
+                    if meta_result["success"]:
+                        _full_sync_status[client_id]["fired"] += 1
+                    else:
+                        _full_sync_status[client_id]["errors"] += 1
+
+                except Exception as e:
+                    _full_sync_status[client_id]["errors"] += 1
+                    logger.error(f"[full_sync] Error firing for {name}: {e}")
+
+        skip += page_size
+        if skip >= total_estimate or len(businesses) < page_size:
+            break
+
+        # Rate limit delay
+        await asyncio.sleep(6)
+
+    _full_sync_status[client_id]["status"] = "completed"
+    _full_sync_status[client_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+    logger.info(f"[full_sync] Completed for {client.name}: {_full_sync_status[client_id]}")
+
+
 def start_cron():
     """Inicia o cron em background."""
     asyncio.create_task(_cron_loop())

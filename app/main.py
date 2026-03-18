@@ -18,7 +18,7 @@ from app.core.database import init_db
 from app.core.config import settings
 from app.api import clients, events, reports, crm, config
 from app.services.datacrazy_service import DataCrazyClient
-from app.services.crm_sync import start_cron, run_sync_all, pause_cron, resume_cron, is_cron_paused, reset_last_check
+from app.services.crm_sync import start_cron, run_sync_all, pause_cron, resume_cron, is_cron_paused, reset_last_check, run_full_sync, get_full_sync_status
 
 
 @asynccontextmanager
@@ -104,3 +104,21 @@ async def sync_reset(client_id: str | None = None):
     """Reset do last_check — próximo sync re-processa todos os businesses."""
     reset_last_check(client_id)
     return {"status": "ok", "message": f"Last check resetado {'para ' + client_id if client_id else 'globalmente'}"}
+
+
+@app.post("/api/sync/full", tags=["System"])
+async def full_sync(client_id: str):
+    """Inicia sync completo do histórico em background.
+    Pagina todos os deals, rate limited (10 páginas/min)."""
+    import asyncio
+    current = get_full_sync_status(client_id)
+    if current.get("status") == "running":
+        return {"status": "already_running", "progress": current}
+    asyncio.create_task(run_full_sync(client_id))
+    return {"status": "started", "message": "Full sync iniciado em background. Use GET /api/sync/status para acompanhar."}
+
+
+@app.get("/api/sync/status", tags=["System"])
+async def sync_status(client_id: str | None = None):
+    """Status do full sync (progresso, total, erros)."""
+    return get_full_sync_status(client_id)
