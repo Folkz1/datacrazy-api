@@ -102,9 +102,10 @@ def _extract_contact(lead: dict) -> tuple[str | None, str | None]:
 
 async def sync_client(client: Client, stage_names: dict[str, str], max_events: int = 0) -> list[dict]:
     """Sync um cliente. max_events=0 means unlimited."""
-    # Check per-client sync settings
+    # Check per-client sync settings (default: enabled if client has stage_map)
     sync_settings = (client.crm_credentials or {}).get("sync_settings", {})
-    if not sync_settings.get("sync_enabled", False):
+    has_stage_map = bool((client.crm_credentials or {}).get("stage_map"))
+    if not sync_settings.get("sync_enabled", has_stage_map):
         return []
 
     client_max = sync_settings.get("sync_max_events", 10)
