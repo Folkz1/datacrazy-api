@@ -147,7 +147,7 @@ async def get_lead_fields(
         if client and client.crm_credentials:
             token = client.crm_credentials.get("datacrazy_token")
     dc = _get_crm_client(token=token)
-    leads = await dc.list_leads(fetch_all=True)
+    leads = await dc.list_leads(max_pages=5)  # 500 leads sample (most recent)
     if not leads:
         return {"fields": [], "sample": {}}
 
