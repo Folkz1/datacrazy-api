@@ -166,7 +166,8 @@ async def get_lead_fields(
 
 
 def _collect_fields(obj: dict, result: dict, prefix: str):
-    """Recursivamente coleta campos de um objeto, gerando paths tipo 'address.city'."""
+    """Recursivamente coleta campos de um objeto, gerando paths tipo 'address.city'.
+    Só conta campos PREENCHIDOS (com valor não-vazio)."""
     if not isinstance(obj, dict):
         return
     for key, value in obj.items():
@@ -181,9 +182,14 @@ def _collect_fields(obj: dict, result: dict, prefix: str):
                     result[path] = {"sample": str(value[0])[:100], "count": 0}
                 result[path]["count"] += 1
         else:
+            # Only count if value is not None/empty
+            has_value = value is not None and str(value).strip() != ""
             if path not in result:
-                result[path] = {"sample": str(value)[:100] if value else "", "count": 0}
-            result[path]["count"] += 1
+                result[path] = {"sample": str(value)[:100] if has_value else "", "count": 0}
+            elif has_value and not result[path]["sample"]:
+                result[path]["sample"] = str(value)[:100]
+            if has_value:
+                result[path]["count"] += 1
 
 
 @router.get("/businesses")
