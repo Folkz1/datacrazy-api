@@ -97,6 +97,8 @@ class EventResponse(BaseModel):
     id: uuid.UUID
     client_id: uuid.UUID
     event_type: str
+    event_data: dict = {}
+    user_data: dict = {}
     status: str
     meta_response: dict
     error_message: str | None
