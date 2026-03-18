@@ -42,10 +42,11 @@ class DataCrazyClient:
         self,
         stage_ids: list[str] | None = None,
         limit: int = 100,
+        skip: int = 0,
         last_moved_after: str | None = None,
         status: str | None = None,
     ) -> list:
-        params: dict = {"take": limit}
+        params: dict = {"take": limit, "skip": skip}
         if stage_ids:
             params["filter[stageId]"] = ",".join(stage_ids)
         if last_moved_after:
