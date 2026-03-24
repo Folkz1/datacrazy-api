@@ -51,14 +51,21 @@ def reset_last_check(client_id: str | None = None):
         _last_check.clear()
 
 
-def _resolve_event_type(stage_name: str, status: str, client_stage_map: dict | None = None) -> str | None:
+def _resolve_event_type(stage_name: str, status: str, client_stage_map: dict | None = None, stage_id: str | None = None) -> str | None:
     if status == "won":
         return "Purchase"
     if status == "lost":
         return None
     if client_stage_map:
+        # New format: stage_map keyed by stage_id (exact match, no ambiguity)
+        if stage_id and stage_id in client_stage_map:
+            entry = client_stage_map[stage_id]
+            if isinstance(entry, dict):
+                return entry.get("event")
+            return entry
+        # Legacy format: name-based substring match (backward compat)
         for key, event in client_stage_map.items():
-            if key.lower() in stage_name.lower():
+            if isinstance(event, str) and key.lower() in stage_name.lower():
                 return event
     stage_lower = stage_name.lower().strip()
     for key, event in DEFAULT_STAGE_MAP.items():
@@ -138,11 +145,12 @@ async def sync_client(client: Client, stage_names: dict[str, str], max_events: i
             break
 
         stage_id = biz.get("stageId", "")
-        stage_name = stage_names.get(stage_id, "")
+        stage_info = stage_names.get(stage_id, {})
+        stage_name = stage_info.get("name", "") if isinstance(stage_info, dict) else stage_info
         status = biz.get("status", "in_process")
 
         custom_map = (client.crm_credentials or {}).get("stage_map")
-        event_type = _resolve_event_type(stage_name, status, custom_map)
+        event_type = _resolve_event_type(stage_name, status, custom_map, stage_id=stage_id)
         if not event_type:
             continue
 
@@ -230,6 +238,7 @@ async def sync_client(client: Client, stage_names: dict[str, str], max_events: i
 
                 try:
                     async with async_session() as db:
+                        pipeline_id = stage_info.get("pipeline_id", "") if isinstance(stage_info, dict) else ""
                         event = Event(
                             client_id=client.id,
                             event_type=event_type,
@@ -239,6 +248,8 @@ async def sync_client(client: Client, stage_names: dict[str, str], max_events: i
                                 "pixel_id": px_id,
                                 "pixel_label": px_label,
                                 "stage": stage_name,
+                                "stage_id": stage_id,
+                                "pipeline_id": pipeline_id,
                                 "status": status,
                             },
                             user_data=user_data,
@@ -307,6 +318,7 @@ async def sync_client(client: Client, stage_names: dict[str, str], max_events: i
 
                 try:
                     async with async_session() as db:
+                        pipeline_id = stage_info.get("pipeline_id", "") if isinstance(stage_info, dict) else ""
                         event = Event(
                             client_id=client.id,
                             event_type=event_type,
@@ -317,6 +329,8 @@ async def sync_client(client: Client, stage_names: dict[str, str], max_events: i
                                 "measurement_id": gp_mid,
                                 "pixel_label": gp_label,
                                 "stage": stage_name,
+                                "stage_id": stage_id,
+                                "pipeline_id": pipeline_id,
                                 "status": status,
                             },
                             user_data=user_data,
@@ -371,9 +385,10 @@ async def run_sync_all(max_events: int = 0, force: bool = False) -> dict:
         try:
             pipelines = await dc.list_pipelines()
             for p in pipelines:
-                stages = await dc.get_pipeline_stages(str(p["id"]))
+                pipeline_id = str(p["id"])
+                stages = await dc.get_pipeline_stages(pipeline_id)
                 for s in stages:
-                    stage_names[s["id"]] = s.get("name", "")
+                    stage_names[s["id"]] = {"name": s.get("name", ""), "pipeline_id": pipeline_id}
             total_stages = max(total_stages, len(stage_names))
         except Exception as e:
             logger.error(f"[sync] Failed to load pipelines for {client.name}: {e}")
@@ -441,9 +456,10 @@ async def run_full_sync(client_id: str):
     try:
         pipelines = await dc.list_pipelines()
         for p in pipelines:
-            stages = await dc.get_pipeline_stages(str(p["id"]))
+            pipeline_id = str(p["id"])
+            stages = await dc.get_pipeline_stages(pipeline_id)
             for s in stages:
-                stage_names[s["id"]] = s.get("name", "")
+                stage_names[s["id"]] = {"name": s.get("name", ""), "pipeline_id": pipeline_id}
     except Exception as e:
         _full_sync_status[client_id] = {"status": "error", "message": f"Failed to load pipelines: {e}"}
         return
@@ -509,10 +525,11 @@ async def run_full_sync(client_id: str):
             _full_sync_status[client_id]["processed"] += 1
 
             stage_id = biz.get("stageId", "")
-            stage_name = stage_names.get(stage_id, "")
+            stage_info = stage_names.get(stage_id, {})
+            stage_name = stage_info.get("name", "") if isinstance(stage_info, dict) else stage_info
             status = biz.get("status", "in_process")
 
-            event_type = _resolve_event_type(stage_name, status, custom_map)
+            event_type = _resolve_event_type(stage_name, status, custom_map, stage_id=stage_id)
             if not event_type:
                 _full_sync_status[client_id]["skipped"] += 1
                 continue

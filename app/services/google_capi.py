@@ -28,6 +28,7 @@ def build_ga4_payload(
     user_data: dict,
     custom_data: dict | None = None,
     client_id: str | None = None,
+    debug_mode: bool = False,
 ) -> dict:
     """Monta payload conforme spec GA4 Measurement Protocol."""
     # GA4 event name (lowercase)
@@ -61,6 +62,9 @@ def build_ga4_payload(
     if user_data.get("external_id"):
         user_id = str(user_data["external_id"])
 
+    if debug_mode:
+        params["debug_mode"] = 1
+
     event = {"name": ga4_event, "params": params}
 
     payload = {
@@ -92,6 +96,7 @@ async def send_event(
         event_type=event_type,
         user_data=user_data,
         custom_data=custom_data,
+        debug_mode=debug_mode,
     )
 
     url = GA4_DEBUG_URL if debug_mode else GA4_URL
