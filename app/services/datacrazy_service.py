@@ -94,7 +94,7 @@ class DataCrazyClient:
     async def health_check(self) -> dict:
         """Testa conexão com DataCrazy API."""
         if not self.configured:
-            return {"status": "not_configured", "message": "DATACRAZY_API_TOKEN not set"}
+            return {"status": "not_configured", "message": "No token provided"}
         try:
             pipelines = await self.list_pipelines()
             return {"status": "ok", "pipelines_count": len(pipelines) if isinstance(pipelines, list) else 0}

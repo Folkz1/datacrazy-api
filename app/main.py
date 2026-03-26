@@ -17,15 +17,13 @@ from fastapi.staticfiles import StaticFiles
 from app.core.database import init_db
 from app.core.config import settings
 from app.api import clients, events, reports, crm, config
-from app.services.datacrazy_service import DataCrazyClient
 from app.services.crm_sync import start_cron, run_sync_all, pause_cron, resume_cron, is_cron_paused, reset_last_check, run_full_sync, get_full_sync_status
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    if settings.datacrazy_api_token:
-        start_cron()
+    start_cron()
     yield
 
 
@@ -64,13 +62,10 @@ async def dashboard():
 
 @app.get("/api/health", tags=["System"])
 async def health():
-    dc = DataCrazyClient()
-    dc_status = await dc.health_check()
     return {
         "status": "ok",
-        "version": "1.2.0",
-        "datacrazy_integration": dc_status,
-        "auto_sync": "paused" if is_cron_paused() else ("active" if settings.datacrazy_api_token else "disabled"),
+        "version": "1.3.0",
+        "auto_sync": "paused" if is_cron_paused() else "active",
         "meta_test_mode": bool(settings.meta_test_event_code),
         "google_ga4": True,
         "ai_reports": bool(settings.anthropic_api_key),

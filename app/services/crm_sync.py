@@ -408,15 +408,18 @@ async def run_sync_all(max_events: int = 0, force: bool = False) -> dict:
 
 
 async def _cron_loop():
-    """Loop que roda sync a cada 5 minutos (respects pause)."""
-    logger.info("[crm_sync] Cron started — polling every 5 minutes")
+    """Loop que roda sync a cada 5 minutos (respects pause). Usa token per-client."""
+    logger.info("[crm_sync] Cron started — polling every 5 minutes (per-client tokens)")
     while True:
         if not _cron_paused:
             try:
                 result = await run_sync_all()
                 fired = result.get("events_fired", 0)
+                checked = result.get("clients_checked", 0)
                 if fired > 0:
-                    logger.info(f"[crm_sync] Fired {fired} events")
+                    logger.info(f"[crm_sync] Fired {fired} events from {checked} clients")
+                else:
+                    logger.debug(f"[crm_sync] Poll: {checked} clients checked, 0 new events")
             except Exception as e:
                 logger.error(f"[crm_sync] Error: {e}")
         await asyncio.sleep(300)
