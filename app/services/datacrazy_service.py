@@ -71,25 +71,31 @@ class DataCrazyClient:
             return resp.json()
 
     async def list_leads(self, limit: int = 50, max_pages: int = 1) -> list:
-        """List leads with pagination. max_pages controls how many pages to fetch (100 per page).
-        Default 1 page = 100 leads. Use max_pages=5 for 500 lead sample."""
+        """List leads with pagination respecting the requested limit."""
+        if limit <= 0:
+            return []
         async with httpx.AsyncClient(timeout=30, headers=self.headers) as client:
             all_leads = []
             skip = 0
-            page_size = 100
-            for _ in range(max_pages):
+            remaining = limit
+            pages_to_fetch = max(max_pages, (limit + 99) // 100)
+            for _ in range(pages_to_fetch):
+                if remaining <= 0:
+                    break
+                page_size = min(remaining, 100)
                 resp = await client.get(f"{self.base_url}/api/v1/leads", params={"take": page_size, "skip": skip})
                 resp.raise_for_status()
                 raw = resp.json()
                 data = raw.get("data", raw) if isinstance(raw, dict) else raw
                 if not data:
                     break
-                all_leads.extend(data)
+                all_leads.extend(data[:remaining])
+                remaining = limit - len(all_leads)
                 total = raw.get("count", 0) if isinstance(raw, dict) else 0
-                skip += page_size
+                skip += len(data)
                 if skip >= total or len(data) < page_size:
                     break
-            return all_leads
+            return all_leads[:limit]
 
     async def health_check(self) -> dict:
         """Testa conexão com DataCrazy API."""
