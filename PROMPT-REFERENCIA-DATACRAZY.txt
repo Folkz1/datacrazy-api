@@ -1,0 +1,143 @@
+PROMPT DE REFERENCIA - DataCrazy Gateway (Meta CAPI)
+
+Cole esse prompt no Claude Code quando precisar trabalhar no projeto DataCrazy.
+
+===
+
+# DataCrazy Gateway - Referencia Tecnica Completa
+
+## O que e
+Gateway que conecta o CRM DataCrazy ao Meta Conversions API (CAPI).
+Quando um lead muda de estagio no CRM, dispara evento (Lead, Purchase, etc) direto pro Meta Pixel via server-side.
+
+## URLs
+- Dashboard: https://datacrazy-api.jz9bd8.easypanel.host
+- API: https://datacrazy-api.jz9bd8.easypanel.host/api
+- GitHub: https://github.com/Folkz1/datacrazy-api (branch: master)
+- CRM DataCrazy API: https://api.g1.datacrazy.io
+
+## Stack
+- Backend: FastAPI + SQLAlchemy async + asyncpg + PostgreSQL
+- Frontend: Single HTML (`static/index.html`) + Tailwind CDN
+- Deploy: EasyPanel (`<easypanel-host>`), projeto `wordpress`, servico `datacrazy-api`
+- DB: `postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>`
+
+## Credenciais
+- Master Key (admin): `<API_MASTER_KEY>`
+- API Key premolde (cliente): `<CLIENT_API_KEY>`
+- EasyPanel API Key: `<EASYPANEL_API_KEY>`
+
+Guarde os valores reais fora do repositorio: `.env`, secret manager ou painel da infra.
+
+## Estrutura do Projeto
+```text
+app/
+  main.py              - FastAPI app, lifespan, cron start
+  core/
+    config.py          - Settings (env vars)
+    database.py        - SQLAlchemy async engine
+    auth.py            - API key auth (master + client)
+  models/
+    client.py          - Client model (name, pixel_id, meta_access_token, crm_credentials JSONB)
+    event.py           - Event model (client_id, event_type, event_data, user_data, meta_response)
+  api/
+    clients.py         - CRUD clientes (POST/GET/PATCH/DELETE /api/clients)
+    events.py          - Track + webhook + historico (/api/events)
+    crm.py             - Endpoints CRM DataCrazy (/api/crm/pipelines, leads, businesses)
+    schemas.py         - Pydantic schemas
+  services/
+    meta_capi.py       - Envia eventos pro Meta (hash PII, build payload, POST graph API)
+    crm_sync.py        - Cron sync: polling CRM a cada 5 min, dedup, disparo automatico
+    datacrazy_service.py - Client HTTP para API DataCrazy
+static/
+  index.html           - Dashboard completo (SPA vanilla JS)
+```
+
+## Como funciona o fluxo
+1. Cliente cadastrado com `pixel_id` + `meta_access_token` + token CRM DataCrazy.
+2. No dashboard, configura "Mapeamento de Estagios" - ex: "PASSADO PARA O ESPECIALISTA" -> `Lead`.
+3. Cron roda a cada 5 min, busca deals que mudaram de stage no CRM.
+4. Se o stage esta mapeado, dispara evento Meta CAPI com dados do lead (email, telefone, nome).
+5. Dedup: nunca re-dispara o mesmo deal+stage (checa tabela `events` antes).
+6. Event ID deterministico (sha256) para dedup adicional no Meta (janela 48h).
+
+## Regras Criticas
+- `DEFAULT_STAGE_MAP` deve ficar vazio.
+- O cliente configura manualmente quais stages disparam quais eventos no dashboard.
+- Sem `stage_map` configurado = zero eventos disparados.
+- Dedup por `business_id + event_type` na tabela `events`.
+- Token CRM e por cliente (`crm_credentials.datacrazy_token`), nao global.
+- Endpoints CRM aceitam `?client_id=` para usar o token do cliente correto.
+
+## Endpoints Principais
+
+### Clientes
+- `POST /api/clients` - Criar cliente (retorna `api_key`)
+- `GET /api/clients` - Listar todos
+- `PATCH /api/clients/{id}` - Atualizar (`name`, `pixel_id`, `events_enabled`, `crm_credentials`)
+- `DELETE /api/clients/{id}` - Remover + eventos
+
+### Eventos
+- `POST /api/events/track` - Disparo manual (controle total)
+- `POST /api/events/webhook` - Webhook generico (mapeia evento CRM -> Meta)
+- `GET /api/events` - Historico com filtros
+- `GET /api/events/stats` - Metricas (`total`, `by_status`, `by_type`)
+
+### CRM DataCrazy
+- `GET /api/crm/pipelines?client_id=` - Pipelines e stages
+- `GET /api/crm/leads?client_id=` - Leads do CRM
+- `GET /api/crm/lead-fields?client_id=` - Campos disponiveis para field mapping
+- `GET /api/crm/businesses?client_id=` - Negocios/deals
+- `POST /api/crm/fire-event?client_id=&lead_id=&event_type=` - Disparo manual do CRM
+
+### Sistema
+- `GET /api/health` - Health check
+- `POST /api/sync` - Trigger manual do cron sync
+
+## Deploy
+Fluxo recomendado:
+1. `git push origin master`
+2. Atualizar cache bust ou referencia do build na sua infra
+3. Rodar deploy no ambiente correto
+
+```bash
+# Exemplo de update de source Dockerfile
+curl -X POST "http://<easypanel-host>:3000/api/trpc/services.app.updateSourceDockerfile" \
+  -H "Authorization: Bearer <EASYPANEL_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"json":{"projectName":"wordpress","serviceName":"datacrazy-api","dockerfile":"...CACHE_BUST=NOVO_HASH..."}}'
+
+# Exemplo de deploy
+curl -X POST "http://<easypanel-host>:3000/api/trpc/services.app.deployService" \
+  -H "Authorization: Bearer <EASYPANEL_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"json":{"projectName":"wordpress","serviceName":"datacrazy-api"}}'
+```
+
+## Testar
+```bash
+# Health
+curl https://datacrazy-api.jz9bd8.easypanel.host/api/health
+
+# Listar clientes
+curl -H "X-API-Key: <API_MASTER_KEY>" https://datacrazy-api.jz9bd8.easypanel.host/api/clients
+
+# Ver pipelines de um cliente
+curl -H "X-API-Key: <API_MASTER_KEY>" "https://datacrazy-api.jz9bd8.easypanel.host/api/crm/pipelines?client_id=<CLIENT_UUID>"
+
+# Trigger sync manual
+curl -X POST -H "X-API-Key: <API_MASTER_KEY>" https://datacrazy-api.jz9bd8.easypanel.host/api/sync
+
+# Disparar evento teste
+curl -X POST -H "X-API-Key: <API_MASTER_KEY>" -H "Content-Type: application/json" \
+  https://datacrazy-api.jz9bd8.easypanel.host/api/events/track \
+  -d '{"client_id":"<CLIENT_UUID>","event_type":"Lead","user_data":{"email":"teste@email.com","phone":"5547999999999"},"test_mode":true}'
+```
+
+## Integracoes Internas
+- Para Orquestra, Evolution API e outras integracoes privadas, use placeholders no repo e recupere os valores reais via secret manager ou documentacao privada.
+- Nunca commitar tokens, API keys, DSNs reais ou telefones privados em repositorio publico.
+
+## Problema Resolvido (2026-03-13)
+Havia um `DEFAULT_STAGE_MAP` hardcoded que mapeava automaticamente stages como "Novo", "Novo Contato" e "Qualificacao" para `Lead`.
+Corrigido: `DEFAULT_STAGE_MAP` agora e vazio. Tudo deve ser configurado manualmente no dashboard pelo cliente.

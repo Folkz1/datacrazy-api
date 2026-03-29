@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataCrazy Gateway — Meta CAPI</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={darkMode:'class',theme:{extend:{colors:{brand:'#6366f1',surface:'#1e1e2e',card:'#262637',border:'#3b3b5c'}}}}</script>
+<style>
+  body{font-family:'Inter',system-ui,sans-serif;background:#0f0f1a}
+  .fade-in{animation:fadeIn .3s ease-in}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .toast{position:fixed;bottom:24px;right:24px;z-index:999;animation:fadeIn .3s}
+  .status-sent{color:#22c55e}.status-error{color:#ef4444}.status-pending{color:#eab308}
+  input,select,textarea{background:#1a1a2e!important;border:1px solid #3b3b5c;color:#e2e8f0;border-radius:8px;padding:8px 12px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 2px rgba(99,102,241,.25)}
+  .btn{padding:8px 20px;border-radius:8px;font-weight:600;cursor:pointer;transition:all .15s}
+  .btn-primary{background:#6366f1;color:white}.btn-primary:hover{background:#4f46e5}
+  .btn-danger{background:#dc2626;color:white}.btn-danger:hover{background:#b91c1c}
+  .btn-ghost{background:transparent;color:#a5b4fc;border:1px solid #3b3b5c}.btn-ghost:hover{background:#262637}
+  .tab-active{border-bottom:2px solid #6366f1;color:#a5b4fc}
+  .tab{cursor:pointer;padding:12px 20px;color:#6b7280;transition:color .15s}
+  .tab:hover{color:#e2e8f0}
+  .card{background:#262637;border:1px solid #3b3b5c;border-radius:12px;padding:24px}
+  .metric{text-align:center}
+  .metric .value{font-size:2rem;font-weight:700;color:#a5b4fc}
+  .metric .label{font-size:.8rem;color:#6b7280;text-transform:uppercase;letter-spacing:.05em}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;padding:8px 12px;color:#6b7280;font-size:.75rem;text-transform:uppercase;border-bottom:1px solid #3b3b5c}
+  td{padding:10px 12px;border-bottom:1px solid #1e1e2e;font-size:.875rem;color:#e2e8f0}
+  tr:hover td{background:#1e1e2e}
+  .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.75rem;font-weight:600}
+  .badge-green{background:#064e3b;color:#34d399}
+  .badge-red{background:#450a0a;color:#f87171}
+  .badge-yellow{background:#422006;color:#fbbf24}
+  .badge-blue{background:#172554;color:#60a5fa}
+</style>
+</head>
+<body class="text-gray-200 min-h-screen">
+
+<!-- Header -->
+<header class="border-b border-border px-6 py-4 flex items-center justify-between">
+  <div class="flex items-center gap-3">
+    <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center font-bold text-white text-sm">DC</div>
+    <h1 class="text-lg font-bold text-white">DataCrazy Gateway</h1>
+    <span class="text-xs text-gray-500 ml-2">Meta Conversions API</span>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="health-dot" class="w-2 h-2 rounded-full bg-gray-500"></span>
+    <span id="health-text" class="text-xs text-gray-500">Conectando...</span>
+    <input id="api-url" type="text" value="" class="text-xs w-48" placeholder="API URL">
+    <input id="master-key" type="password" placeholder="Master Key" class="text-xs w-40">
+    <button onclick="connect()" class="btn btn-primary text-xs">Conectar</button>
+  </div>
+</header>
+
+<!-- Tabs -->
+<nav class="flex border-b border-border px-6">
+  <div class="tab tab-active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</div>
+  <div class="tab" data-tab="clients" onclick="switchTab('clients')">Clientes</div>
+  <div class="tab" data-tab="events" onclick="switchTab('events')">Eventos</div>
+  <div class="tab" data-tab="test" onclick="switchTab('test')">Testar Disparo</div>
+  <div class="tab" data-tab="crm" onclick="switchTab('crm')">CRM DataCrazy</div>
+</nav>
+
+<!-- Dashboard Tab -->
+<main id="tab-dashboard" class="p-6 fade-in">
+  <div class="grid grid-cols-4 gap-4 mb-6">
+    <div class="card metric"><div class="value" id="m-clients">-</div><div class="label">Clientes</div></div>
+    <div class="card metric"><div class="value" id="m-events">-</div><div class="label">Eventos Enviados</div></div>
+    <div class="card metric"><div class="value" id="m-errors">-</div><div class="label">Erros</div></div>
+    <div class="card metric"><div class="value" id="m-rate">-</div><div class="label">Taxa Sucesso</div></div>
+  </div>
+  <div class="grid grid-cols-2 gap-4">
+    <div class="card">
+      <h3 class="text-sm font-semibold text-gray-400 mb-3">Eventos por Tipo</h3>
+      <div id="events-by-type" class="space-y-2"></div>
+    </div>
+    <div class="card">
+      <h3 class="text-sm font-semibold text-gray-400 mb-3">Ultimos Eventos</h3>
+      <div id="recent-events" class="space-y-2 max-h-64 overflow-y-auto"></div>
+    </div>
+  </div>
+</main>
+
+<!-- Clients Tab -->
+<main id="tab-clients" class="p-6 fade-in hidden">
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-lg font-bold">Clientes</h2>
+    <button onclick="showNewClient()" class="btn btn-primary text-sm">+ Novo Cliente</button>
+  </div>
+
+  <!-- Client Form (create + edit) -->
+  <div id="client-form" class="card mb-4 hidden">
+    <h3 id="cf-title" class="font-semibold mb-3">Cadastrar Cliente</h3>
+    <input id="cf-id" type="hidden">
+    <div class="grid grid-cols-2 gap-3">
+      <div class="col-span-2">
+        <label class="text-xs text-gray-400">Nome *</label>
+        <input id="nc-name" type="text" class="w-full" placeholder="Ex: Pacific Surf School">
+      </div>
+    </div>
+
+    <!-- Multi-Pixel Section -->
+    <div class="mt-3">
+      <div class="flex justify-between items-center mb-2">
+        <h4 class="text-sm font-semibold text-gray-300">Meta Pixels</h4>
+        <button type="button" onclick="addPixelRow()" class="btn btn-ghost text-xs">+ Adicionar Pixel</button>
+      </div>
+      <div id="pixels-list" class="space-y-2"></div>
+    </div>
+
+    <!-- Google GA4 Pixels Section -->
+    <div class="mt-3">
+      <div class="flex justify-between items-center mb-2">
+        <h4 class="text-sm font-semibold text-gray-300">
+          <span style="background:linear-gradient(90deg,#4285F4,#EA4335,#FBBC05,#34A853);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:700">G</span>
+          Google Pixels (GA4)
+        </h4>
+        <button type="button" onclick="addGooglePixelRow()" class="btn btn-ghost text-xs">+ Adicionar GA4</button>
+      </div>
+      <div id="google-pixels-list" class="space-y-2"></div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3 mt-3">
+      <div>
+        <label class="text-xs text-gray-400">Eventos Habilitados</label>
+        <div class="flex flex-wrap gap-2 mt-1">
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="Purchase" checked class="nc-events"> Purchase</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="Lead" checked class="nc-events"> Lead</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="ViewContent" class="nc-events"> ViewContent</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="AddToCart" class="nc-events"> AddToCart</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="InitiateCheckout" class="nc-events"> InitiateCheckout</label>
+          <label class="flex items-center gap-1 text-xs"><input type="checkbox" value="CompleteRegistration" class="nc-events"> CompleteRegistration</label>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs text-gray-400">Token DataCrazy CRM (opcional) <span id="cf-crm-hint" class="text-gray-600"></span></label>
+        <input id="nc-crm-token" type="text" class="w-full" placeholder="Token DataCrazy (opcional)">
+      </div>
+    </div>
+
+    <!-- Stage Mapping -->
+    <div id="stage-mapping-section" class="mt-4 hidden">
+      <div class="flex justify-between items-center mb-2">
+        <h4 class="text-sm font-semibold text-gray-300">Mapeamento de Estágios CRM → Evento Meta</h4>
+        <button onclick="loadStagesForMapping()" class="btn btn-ghost text-xs">Carregar Estágios do CRM</button>
+      </div>
+      <p class="text-xs text-gray-500 mb-3">Defina qual estágio do CRM dispara qual evento no Meta Pixel. Estágios não mapeados serão ignorados.</p>
+      <div id="stage-mapping-list" class="space-y-2">
+        <p class="text-gray-500 text-sm">Clique "Carregar Estágios do CRM" para configurar</p>
+      </div>
+      <div id="stage-mapping-summary" class="mt-3 hidden">
+        <div class="bg-surface rounded-lg p-3">
+          <p class="text-xs text-gray-400 mb-1">Resumo do mapeamento:</p>
+          <div class="flex gap-4">
+            <span class="text-xs"><span class="text-green-400 font-bold" id="sm-purchase-count">0</span> → Purchase</span>
+            <span class="text-xs"><span class="text-blue-400 font-bold" id="sm-lead-count">0</span> → Lead</span>
+            <span class="text-xs"><span class="text-gray-500 font-bold" id="sm-ignore-count">0</span> → Ignorar</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Field Mapping (CRM fields → Meta parameters) -->
+    <div id="field-mapping-section" class="mt-4 hidden">
+      <div class="flex justify-between items-center mb-2">
+        <h4 class="text-sm font-semibold text-gray-300">Mapeamento de Campos CRM → Meta Pixel</h4>
+        <button onclick="loadFieldsForMapping()" class="btn btn-ghost text-xs">Carregar Campos do CRM</button>
+      </div>
+      <p class="text-xs text-gray-500 mb-3">Associe campos do CRM aos parâmetros do Meta para melhorar a qualidade de correspondência (match quality).</p>
+      <div id="field-mapping-list" class="space-y-2">
+        <p class="text-gray-500 text-sm">Clique "Carregar Campos do CRM" para ver os campos disponíveis</p>
+      </div>
+    </div>
+
+    <div class="flex gap-2 mt-4">
+      <button onclick="saveClient()" id="cf-btn" class="btn btn-primary text-sm">Criar Cliente</button>
+      <button onclick="hideClientForm()" class="btn btn-ghost text-sm">Cancelar</button>
+    </div>
+  </div>
+
+  <div id="clients-table" class="card">
+    <table>
+      <thead><tr><th>Nome</th><th>Pixel ID</th><th>Pixels</th><th>API Key</th><th>Eventos</th><th>Status</th><th>Acoes</th></tr></thead>
+      <tbody id="clients-body"></tbody>
+    </table>
+  </div>
+</main>
+
+<!-- Events Tab -->
+<main id="tab-events" class="p-6 fade-in hidden">
+  <div class="flex gap-3 mb-4 items-end">
+    <div>
+      <label class="text-xs text-gray-400">Cliente</label>
+      <select id="ev-client" class="w-48" onchange="loadEvents()"><option value="">Todos</option></select>
+    </div>
+    <div>
+      <label class="text-xs text-gray-400">Status</label>
+      <select id="ev-status" class="w-32" onchange="loadEvents()">
+        <option value="">Todos</option><option value="sent">Sent</option><option value="error">Error</option>
+      </select>
+    </div>
+    <div>
+      <label class="text-xs text-gray-400">Tipo</label>
+      <select id="ev-type" class="w-36" onchange="loadEvents()">
+        <option value="">Todos</option><option>Purchase</option><option>Lead</option><option>ViewContent</option>
+      </select>
+    </div>
+    <button onclick="loadEvents()" class="btn btn-ghost text-sm">Atualizar</button>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr><th>Data</th><th>Cliente</th><th>Plataforma</th><th>Tipo</th><th>Status</th><th>Resposta</th></tr></thead>
+      <tbody id="events-body"></tbody>
+    </table>
+    <p id="events-empty" class="text-gray-500 text-center py-8 hidden">Nenhum evento encontrado</p>
+  </div>
+</main>
+
+<!-- Test Tab -->
+<main id="tab-test" class="p-6 fade-in hidden">
+  <div class="grid grid-cols-2 gap-6">
+    <div class="card">
+      <h3 class="font-semibold mb-4">Disparar Evento de Teste</h3>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs text-gray-400">Cliente *</label>
+          <select id="t-client" class="w-full"></select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-gray-400">Tipo de Evento *</label>
+            <select id="t-event-type" class="w-full">
+              <option>Purchase</option><option>Lead</option><option>ViewContent</option>
+              <option>AddToCart</option><option>InitiateCheckout</option><option>CompleteRegistration</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400">Source URL</label>
+            <input id="t-source-url" type="text" class="w-full" placeholder="https://site.com/obrigado">
+          </div>
+        </div>
+        <h4 class="text-xs font-semibold text-gray-400 mt-2">Dados do Usuario</h4>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-400">Email</label><input id="t-email" type="email" class="w-full" placeholder="lead@example.com"></div>
+          <div><label class="text-xs text-gray-400">Telefone</label><input id="t-phone" type="text" class="w-full" placeholder="5547999220055"></div>
+          <div><label class="text-xs text-gray-400">Nome</label><input id="t-fname" type="text" class="w-full" placeholder="Joao"></div>
+          <div><label class="text-xs text-gray-400">Sobrenome</label><input id="t-lname" type="text" class="w-full" placeholder="Silva"></div>
+        </div>
+        <h4 class="text-xs font-semibold text-gray-400 mt-2">Dados do Evento</h4>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-400">Valor (R$)</label><input id="t-value" type="number" class="w-full" placeholder="1500.00"></div>
+          <div><label class="text-xs text-gray-400">Moeda</label><input id="t-currency" type="text" class="w-full" value="BRL"></div>
+          <div class="col-span-2"><label class="text-xs text-gray-400">Content Name</label><input id="t-content" type="text" class="w-full" placeholder="Aula de Surf Privada"></div>
+        </div>
+        <div class="flex items-center gap-3 mt-2">
+          <label class="flex items-center gap-2 text-sm">
+            <input id="t-test-mode" type="checkbox" checked> Modo Teste (Meta Test Events)
+          </label>
+        </div>
+        <button onclick="fireTestEvent()" id="btn-fire" class="btn btn-primary w-full mt-3">Disparar Evento</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3 class="font-semibold mb-4">Resultado</h3>
+      <pre id="test-result" class="bg-surface rounded-lg p-4 text-xs font-mono overflow-auto max-h-[500px] text-gray-300">Dispare um evento para ver o resultado aqui...</pre>
+    </div>
+  </div>
+
+  <!-- Webhook Example -->
+  <div class="card mt-6">
+    <h3 class="font-semibold mb-3">Exemplo de Webhook (para integrar com CRM)</h3>
+    <pre class="bg-surface rounded-lg p-4 text-xs font-mono text-gray-400 overflow-auto">POST /api/events/webhook
+Headers: { "X-API-Key": "dc_xxxxx" }
+
+{
+  "event": "deal_won",
+  "data": {
+    "deal_id": "123",
+    "value": 1500.00,
+    "currency": "BRL",
+    "email": "lead@example.com",
+    "phone": "5547999220055",
+    "name": "Joao Silva"
+  }
+}</pre>
+  </div>
+</main>
+
+<!-- CRM DataCrazy Tab -->
+<main id="tab-crm" class="p-6 fade-in hidden">
+  <div class="grid grid-cols-3 gap-4 mb-6">
+    <div class="card metric"><div class="value" id="crm-pipelines">-</div><div class="label">Pipelines</div></div>
+    <div class="card metric"><div class="value" id="crm-leads">-</div><div class="label">Leads</div></div>
+    <div class="card metric"><div class="value" id="crm-deals">-</div><div class="label">Negócios</div></div>
+  </div>
+
+  <!-- Pipelines -->
+  <div class="card mb-4">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-semibold">Pipelines & Stages</h3>
+      <button onclick="loadCRM()" class="btn btn-ghost text-xs">Atualizar</button>
+    </div>
+    <div id="crm-pipelines-list" class="space-y-3">
+      <p class="text-gray-500 text-sm">Conecte para ver os pipelines do CRM</p>
+    </div>
+  </div>
+
+  <!-- Leads -->
+  <div class="card mb-4">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-semibold">Leads do CRM</h3>
+      <div class="flex gap-2">
+        <input id="crm-lead-search" type="text" class="text-xs w-48" placeholder="Buscar lead..." onkeyup="if(event.key==='Enter')loadLeads()">
+        <button onclick="loadLeads()" class="btn btn-ghost text-xs">Buscar</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Tags</th><th>Ações</th></tr></thead>
+      <tbody id="crm-leads-body"></tbody>
+    </table>
+    <p id="crm-leads-empty" class="text-gray-500 text-center py-4 text-sm hidden">Nenhum lead encontrado</p>
+  </div>
+
+  <!-- Negócios por Pipeline -->
+  <div class="card mb-4">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-semibold">Negócios (Deals)</h3>
+      <div class="flex gap-2 items-center">
+        <select id="crm-biz-pipeline" class="text-xs w-48" onchange="loadBusinesses()">
+          <option value="">Todos os pipelines</option>
+        </select>
+        <button onclick="loadBusinesses()" class="btn btn-ghost text-xs">Atualizar</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Código</th><th>Lead</th><th>Email</th><th>Telefone</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead>
+      <tbody id="crm-biz-body"></tbody>
+    </table>
+    <p id="crm-biz-empty" class="text-gray-500 text-center py-4 text-sm hidden">Nenhum negócio encontrado</p>
+  </div>
+
+  <!-- Fire Event from CRM -->
+  <div id="crm-fire-modal" class="card mb-4 hidden">
+    <h3 class="font-semibold mb-3">Disparar Evento Meta a partir do CRM</h3>
+    <div class="grid grid-cols-2 gap-3 mb-3">
+      <div>
+        <label class="text-xs text-gray-400">Cliente (nosso sistema) *</label>
+        <select id="crm-fire-client" class="w-full text-sm"></select>
+      </div>
+      <div>
+        <label class="text-xs text-gray-400">Tipo de Evento *</label>
+        <select id="crm-fire-type" class="w-full text-sm">
+          <option>Lead</option><option>Purchase</option><option>ViewContent</option>
+          <option>AddToCart</option><option>InitiateCheckout</option><option>CompleteRegistration</option>
+        </select>
+      </div>
+    </div>
+    <div class="bg-surface rounded-lg p-3 mb-3">
+      <p class="text-xs text-gray-400 mb-1">Dados extraídos do CRM:</p>
+      <pre id="crm-fire-preview" class="text-xs font-mono text-gray-300"></pre>
+    </div>
+    <div class="flex items-center gap-3">
+      <label class="flex items-center gap-2 text-sm">
+        <input id="crm-fire-test" type="checkbox" checked> Modo Teste
+      </label>
+      <button onclick="executeCrmFire()" id="btn-crm-fire" class="btn btn-primary text-sm">Disparar Evento</button>
+      <button onclick="document.getElementById('crm-fire-modal').classList.add('hidden')" class="btn btn-ghost text-sm">Cancelar</button>
+    </div>
+    <pre id="crm-fire-result" class="bg-surface rounded-lg p-3 mt-3 text-xs font-mono hidden"></pre>
+  </div>
+</main>
+
+<script>
+let API = '';
+let KEY = '';
+let clients = [];
+
+// --- Connection ---
+async function connect() {
+  API = document.getElementById('api-url').value.replace(/\/+$/, '');
+  KEY = document.getElementById('master-key').value;
+  try {
+    const r = await api('/api/health');
+    document.getElementById('health-dot').className = 'w-2 h-2 rounded-full bg-green-500';
+    document.getElementById('health-text').textContent = 'Conectado | v' + r.version;
+    document.getElementById('health-text').className = 'text-xs text-green-400';
+    toast('Conectado com sucesso!', 'green');
+    loadDashboard();
+    loadClients();
+  } catch (e) {
+    document.getElementById('health-dot').className = 'w-2 h-2 rounded-full bg-red-500';
+    document.getElementById('health-text').textContent = 'Erro: ' + e.message;
+    document.getElementById('health-text').className = 'text-xs text-red-400';
+    toast('Falha na conexao: ' + e.message, 'red');
+  }
+}
+
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (KEY) headers['X-API-Key'] = KEY;
+  const r = await fetch(API + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  if (!r.ok) {
+    const body = await r.text();
+    throw new Error(r.status + ': ' + body.slice(0, 200));
+  }
+  if (r.status === 204) return null;
+  return r.json();
+}
+
+// --- Dashboard ---
+async function loadDashboard() {
+  try {
+    const [cl, stats] = await Promise.all([api('/api/clients'), api('/api/events/stats')]);
+    clients = cl;
+    document.getElementById('m-clients').textContent = cl.length;
+    const sent = stats.by_status?.sent || 0;
+    const err = stats.by_status?.error || 0;
+    const total = stats.total || 0;
+    document.getElementById('m-events').textContent = sent;
+    document.getElementById('m-errors').textContent = err;
+    document.getElementById('m-rate').textContent = total > 0 ? Math.round(sent / total * 100) + '%' : '-';
+
+    // By type
+    const byType = document.getElementById('events-by-type');
+    byType.innerHTML = '';
+    const types = stats.by_type || {};
+    for (const [t, c] of Object.entries(types)) {
+      byType.innerHTML += `<div class="flex justify-between"><span class="text-sm">${t}</span><span class="badge badge-blue">${c}</span></div>`;
+    }
+    if (!Object.keys(types).length) byType.innerHTML = '<p class="text-gray-500 text-sm">Nenhum evento ainda</p>';
+
+    // Recent events
+    const evts = await api('/api/events?limit=10');
+    const recent = document.getElementById('recent-events');
+    recent.innerHTML = '';
+    const evtList = Array.isArray(evts) ? evts : [];
+    for (const e of evtList.slice(0, 8)) {
+      const time = new Date(e.created_at).toLocaleString('pt-BR', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'});
+      const statusCls = e.status === 'sent' ? 'badge-green' : e.status === 'error' ? 'badge-red' : 'badge-yellow';
+      recent.innerHTML += `<div class="flex justify-between items-center text-sm"><span>${time} — ${e.event_type}</span><span class="badge ${statusCls}">${e.status}</span></div>`;
+    }
+    if (!evtList.length) recent.innerHTML = '<p class="text-gray-500 text-sm">Nenhum evento ainda</p>';
+  } catch (e) {
+    console.error('Dashboard:', e);
+  }
+}
+
+// --- Clients ---
+async function loadClients() {
+  try {
+    clients = await api('/api/clients');
+    const body = document.getElementById('clients-body');
+    body.innerHTML = '';
+    for (const c of clients) {
+      const pxCount = (c.pixels && c.pixels.length) || (c.pixel_id ? 1 : 0);
+      const pxActive = c.pixels ? c.pixels.filter(p => p.active !== false).length : (c.pixel_id ? 1 : 0);
+      const pxLabel = pxCount > 1 ? `${pxActive}/${pxCount} pixels` : esc(c.pixel_id || 'N/A');
+      const tokenOk = c.meta_access_token && c.meta_access_token.startsWith('EAA') && c.meta_access_token.length > 20;
+      const gpxCount = (c.google_pixels && c.google_pixels.length) || 0;
+      const gpxActive = c.google_pixels ? c.google_pixels.filter(p => p.active !== false).length : 0;
+      const gpxBadge = gpxCount > 0 ? `<span class="text-xs text-blue-400 ml-1">${gpxActive}/${gpxCount} GA4</span>` : '';
+      body.innerHTML += `<tr>
+        <td class="font-medium">${esc(c.name)}</td>
+        <td class="font-mono text-xs">${pxLabel}</td>
+        <td><span class="text-xs ${tokenOk ? 'text-green-400' : 'text-red-400'}">${pxCount} Meta</span>${gpxBadge}</td>
+        <td><code class="text-xs bg-surface px-2 py-1 rounded cursor-pointer" onclick="copyKey('${esc(c.api_key)}')">${c.api_key.slice(0,12)}... <span class="text-gray-500">copiar</span></code></td>
+        <td>${c.events_enabled.map(e=>'<span class="badge badge-blue mr-1">'+e+'</span>').join('')}</td>
+        <td>${c.active ? '<span class="badge badge-green">Ativo</span>' : '<span class="badge badge-red">Inativo</span>'}</td>
+        <td class="space-x-2">
+          <button onclick="toggleClient('${c.id}', ${!c.active})" class="text-xs hover:underline ${c.active ? 'text-yellow-400' : 'text-green-400'}">${c.active ? 'Desativar' : 'Ativar'}</button>
+          <button onclick="editClient('${c.id}')" class="text-blue-400 text-xs hover:underline">Editar</button>
+          <button onclick="deleteClient('${c.id}')" class="text-red-400 text-xs hover:underline">Remover</button>
+        </td>
+      </tr>`;
+    }
+    populateClientSelects();
+  } catch (e) {
+    console.error('Clients:', e);
+  }
+}
+
+function populateClientSelects() {
+  for (const sel of ['ev-client', 't-client']) {
+    const el = document.getElementById(sel);
+    const val = el.value;
+    const isFilter = sel === 'ev-client';
+    el.innerHTML = isFilter ? '<option value="">Todos</option>' : '';
+    for (const c of clients) {
+      el.innerHTML += `<option value="${c.id}">${esc(c.name)} (${c.pixel_id})</option>`;
+    }
+    if (val) el.value = val;
+  }
+}
+
+// --- Multi-Pixel Management ---
+function addPixelRow(data = {}) {
+  const list = document.getElementById('pixels-list');
+  const id = data.id || crypto.randomUUID();
+  const row = document.createElement('div');
+  row.className = 'flex items-center gap-2 bg-surface rounded-lg px-3 py-2 pixel-row';
+  row.dataset.pixelId = id;
+  row.innerHTML = `
+    <input type="text" class="px-label text-xs w-24" placeholder="Label (ex: B2B)" value="${esc(data.label || 'Principal')}">
+    <input type="text" class="px-pixel-id flex-1" placeholder="Pixel ID *" value="${esc(data.pixel_id || '')}">
+    <input type="text" class="px-token flex-1" placeholder="Access Token *" value="${esc(data.access_token || '')}">
+    <label class="flex items-center gap-1 text-xs shrink-0">
+      <input type="checkbox" class="px-active" ${data.active !== false ? 'checked' : ''}> Ativo
+    </label>
+    <button type="button" onclick="this.closest('.pixel-row').remove()" class="text-red-400 text-xs hover:underline shrink-0">X</button>`;
+  list.appendChild(row);
+}
+
+function getPixelsFromUI() {
+  const pixels = [];
+  document.querySelectorAll('.pixel-row').forEach(row => {
+    const pixelId = row.querySelector('.px-pixel-id').value.trim();
+    const token = row.querySelector('.px-token').value.trim();
+    if (pixelId && token) {
+      pixels.push({
+        id: row.dataset.pixelId,
+        pixel_id: pixelId,
+        access_token: token,
+        label: row.querySelector('.px-label').value.trim() || 'Principal',
+        active: row.querySelector('.px-active').checked,
+      });
+    }
+  });
+  return pixels;
+}
+
+// --- Google GA4 Pixel Management ---
+function addGooglePixelRow(data = {}) {
+  const list = document.getElementById('google-pixels-list');
+  const id = data.id || crypto.randomUUID();
+  const row = document.createElement('div');
+  row.className = 'flex items-center gap-2 bg-surface rounded-lg px-3 py-2 gpixel-row';
+  row.dataset.pixelId = id;
+  row.innerHTML = `
+    <input type="text" class="gp-label text-xs w-24" placeholder="Label (ex: Site)" value="${esc(data.label || 'Principal')}">
+    <input type="text" class="gp-measurement-id flex-1" placeholder="Measurement ID (G-XXXXXX) *" value="${esc(data.measurement_id || '')}">
+    <input type="text" class="gp-api-secret flex-1" placeholder="API Secret *" value="${esc(data.api_secret || '')}">
+    <label class="flex items-center gap-1 text-xs shrink-0">
+      <input type="checkbox" class="gp-active" ${data.active !== false ? 'checked' : ''}> Ativo
+    </label>
+    <button type="button" onclick="this.closest('.gpixel-row').remove()" class="text-red-400 text-xs hover:underline shrink-0">X</button>`;
+  list.appendChild(row);
+}
+
+function getGooglePixelsFromUI() {
+  const pixels = [];
+  document.querySelectorAll('.gpixel-row').forEach(row => {
+    const measurementId = row.querySelector('.gp-measurement-id').value.trim();
+    const apiSecret = row.querySelector('.gp-api-secret').value.trim();
+    if (measurementId && apiSecret) {
+      pixels.push({
+        id: row.dataset.pixelId,
+        measurement_id: measurementId,
+        api_secret: apiSecret,
+        label: row.querySelector('.gp-label').value.trim() || 'Principal',
+        active: row.querySelector('.gp-active').checked,
+      });
+    }
+  });
+  return pixels;
+}
+
+function showNewClient() {
+  document.getElementById('cf-id').value = '';
+  document.getElementById('cf-title').textContent = 'Cadastrar Cliente';
+  document.getElementById('cf-btn').textContent = 'Criar Cliente';
+  document.getElementById('cf-crm-hint').textContent = '';
+  document.getElementById('nc-name').value = '';
+  document.getElementById('nc-crm-token').value = '';
+  document.getElementById('nc-crm-token').placeholder = 'Token DataCrazy (opcional)';
+  document.querySelectorAll('.nc-events').forEach(cb => cb.checked = ['Purchase','Lead'].includes(cb.value));
+  // Reset pixels — start with one empty row
+  document.getElementById('pixels-list').innerHTML = '';
+  addPixelRow();
+  // Reset Google pixels
+  document.getElementById('google-pixels-list').innerHTML = '';
+  document.getElementById('stage-mapping-section').classList.add('hidden');
+  document.getElementById('field-mapping-section').classList.add('hidden');
+  document.getElementById('client-form').classList.remove('hidden');
+}
+
+function editClient(id) {
+  const c = clients.find(x => x.id === id);
+  if (!c) return;
+  document.getElementById('cf-id').value = id;
+  document.getElementById('cf-title').textContent = 'Editar Cliente: ' + c.name;
+  document.getElementById('cf-btn').textContent = 'Salvar Alteracoes';
+  document.getElementById('cf-crm-hint').textContent = c.crm_credentials?.datacrazy_token ? '(limpe e cole novo para alterar)' : '';
+  document.getElementById('nc-name').value = c.name;
+  document.getElementById('nc-crm-token').value = c.crm_credentials?.datacrazy_token || '';
+  document.getElementById('nc-crm-token').placeholder = 'Token DataCrazy (opcional)';
+  document.querySelectorAll('.nc-events').forEach(cb => cb.checked = c.events_enabled.includes(cb.value));
+
+  // Populate pixels
+  document.getElementById('pixels-list').innerHTML = '';
+  const pixels = c.pixels && c.pixels.length > 0 ? c.pixels
+    : [{id: crypto.randomUUID(), pixel_id: c.pixel_id || '', access_token: c.meta_access_token || '', label: 'Principal', active: true}];
+  pixels.forEach(p => addPixelRow(p));
+
+  // Populate Google pixels
+  document.getElementById('google-pixels-list').innerHTML = '';
+  if (c.google_pixels && c.google_pixels.length > 0) {
+    c.google_pixels.forEach(gp => addGooglePixelRow(gp));
+  }
+
+  document.getElementById('stage-mapping-section').classList.remove('hidden');
+  document.getElementById('field-mapping-section').classList.remove('hidden');
+  document.getElementById('client-form').classList.remove('hidden');
+  cachedPipelineStages = null;
+  cachedLeadFields = null;
+  if (c.crm_credentials?.stage_map || c.crm_credentials?.datacrazy_token) {
+    loadStagesForMapping();
+  }
+  loadFieldsForMapping();
+}
+
+function hideClientForm() { document.getElementById('client-form').classList.add('hidden'); }
+
+async function saveClient() {
+  const editId = document.getElementById('cf-id').value;
+  const events = [...document.querySelectorAll('.nc-events:checked')].map(e => e.value);
+
+  // Validação campos obrigatórios
+  const name = document.getElementById('nc-name').value.trim();
+  const pixels = getPixelsFromUI();
+  const googlePixels = getGooglePixelsFromUI();
+  if (!name) { toast('Nome e obrigatorio', 'red'); return; }
+  if (!pixels.length && !googlePixels.length) { toast('Adicione ao menos um pixel (Meta ou Google)', 'red'); return; }
+
+  if (editId) {
+    // PATCH - update
+    const payload = {
+      name: name,
+      pixels: pixels,
+      pixel_id: pixels[0]?.pixel_id || '',
+      meta_access_token: pixels[0]?.access_token || '',
+      google_pixels: googlePixels,
+      events_enabled: events,
+    };
+    const crmToken = document.getElementById('nc-crm-token').value.trim();
+    const stageMap = getStageMapFromUI();
+    const fieldMap = getFieldMapFromUI();
+    const existingCreds = clients.find(c => c.id === editId)?.crm_credentials || {};
+    const newCreds = { ...existingCreds };
+    if (crmToken) newCreds.datacrazy_token = crmToken;
+    if (stageMap) newCreds.stage_map = stageMap;
+    else if (document.querySelectorAll('.stage-map-select').length > 0) delete newCreds.stage_map;
+    if (fieldMap) newCreds.field_map = fieldMap;
+    else if (document.querySelectorAll('.field-map-select').length > 0) delete newCreds.field_map;
+    payload.crm_credentials = newCreds;
+
+    try {
+      await api('/api/clients/' + editId, { method: 'PATCH', body: JSON.stringify(payload) });
+      toast('Cliente atualizado!', 'green');
+      hideClientForm();
+      loadClients();
+      loadDashboard();
+    } catch (e) { toast('Erro: ' + e.message, 'red'); }
+  } else {
+    // POST - create
+    const payload = {
+      name: name,
+      pixels: pixels,
+      pixel_id: pixels[0]?.pixel_id || '',
+      meta_access_token: pixels[0]?.access_token || '',
+      google_pixels: googlePixels,
+      events_enabled: events,
+      crm_credentials: {}
+    };
+    const crmToken = document.getElementById('nc-crm-token').value.trim();
+    if (crmToken) payload.crm_credentials = { datacrazy_token: crmToken };
+
+    try {
+      const r = await api('/api/clients', { method: 'POST', body: JSON.stringify(payload) });
+      toast('Cliente criado! API Key: ' + r.api_key, 'green');
+      hideClientForm();
+      loadClients();
+      loadDashboard();
+    } catch (e) { toast('Erro: ' + e.message, 'red'); }
+  }
+}
+
+// --- Stage Mapping ---
+let cachedPipelineStages = null;
+
+async function loadStagesForMapping() {
+  const list = document.getElementById('stage-mapping-list');
+  list.innerHTML = '<p class="text-gray-400 text-sm">Carregando estágios...</p>';
+
+  try {
+    // Pass client_id to use client-specific CRM token
+    const editId = document.getElementById('cf-id').value;
+    const clientParam = editId ? '?client_id=' + editId : '';
+    if (!cachedPipelineStages) {
+      cachedPipelineStages = await api('/api/crm/pipelines' + clientParam);
+    }
+
+    // Get current stage_map from editing client
+    const currentClient = editId ? clients.find(c => c.id === editId) : null;
+    const currentMap = currentClient?.crm_credentials?.stage_map || {};
+
+    list.innerHTML = '';
+    for (const p of cachedPipelineStages) {
+      const pipeHeader = document.createElement('div');
+      pipeHeader.className = 'text-xs font-semibold text-gray-400 mt-2 mb-1';
+      pipeHeader.textContent = p.name + ' (' + p.stages_count + ' estágios)';
+      list.appendChild(pipeHeader);
+
+      for (const s of p.stages) {
+        const stageName = s.name.toLowerCase().trim();
+        // Only use explicitly configured mappings — default is always "Ignorar"
+        let currentEvent = currentMap[stageName] || currentMap[s.name] || '';
+
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-3 bg-surface rounded-lg px-3 py-2';
+        row.innerHTML = `
+          <span class="text-sm flex-1">${esc(s.name)}</span>
+          <select class="stage-map-select text-xs w-36" data-stage="${esc(s.name)}" onchange="updateStageSummary()">
+            <option value="" ${!currentEvent ? 'selected' : ''}>Ignorar</option>
+            <option value="Purchase" ${currentEvent === 'Purchase' ? 'selected' : ''}>Purchase (Conversão)</option>
+            <option value="Lead" ${currentEvent === 'Lead' ? 'selected' : ''}>Lead (Qualificado)</option>
+            <option value="ViewContent" ${currentEvent === 'ViewContent' ? 'selected' : ''}>ViewContent</option>
+            <option value="AddToCart" ${currentEvent === 'AddToCart' ? 'selected' : ''}>AddToCart</option>
+            <option value="InitiateCheckout" ${currentEvent === 'InitiateCheckout' ? 'selected' : ''}>InitiateCheckout</option>
+            <option value="CompleteRegistration" ${currentEvent === 'CompleteRegistration' ? 'selected' : ''}>CompleteRegistration</option>
+          </select>`;
+        list.appendChild(row);
+      }
+    }
+    document.getElementById('stage-mapping-summary').classList.remove('hidden');
+    updateStageSummary();
+  } catch (e) {
+    list.innerHTML = `<p class="text-red-400 text-sm">Erro ao carregar: ${esc(e.message)}</p>`;
+  }
+}
+
+function updateStageSummary() {
+  const selects = document.querySelectorAll('.stage-map-select');
+  let purchase = 0, lead = 0, ignore = 0;
+  selects.forEach(s => {
+    if (s.value === 'Purchase') purchase++;
+    else if (s.value === 'Lead') lead++;
+    else if (!s.value) ignore++;
+    else lead++; // other events count as lead-like
+  });
+  document.getElementById('sm-purchase-count').textContent = purchase;
+  document.getElementById('sm-lead-count').textContent = lead;
+  document.getElementById('sm-ignore-count').textContent = ignore;
+}
+
+function getStageMapFromUI() {
+  const map = {};
+  document.querySelectorAll('.stage-map-select').forEach(s => {
+    if (s.value) {
+      map[s.dataset.stage.toLowerCase().trim()] = s.value;
+    }
+  });
+  return Object.keys(map).length ? map : null;
+}
+
+// --- Field Mapping (CRM → Meta) ---
+const META_PARAMS = [
+  {key: 'city', label: 'Cidade', meta: 'ct', boost: '+14%'},
+  {key: 'state', label: 'Estado', meta: 'st', boost: '+14%'},
+  {key: 'country', label: 'País', meta: 'country', boost: '+14%'},
+  {key: 'zip_code', label: 'CEP / Código Postal', meta: 'zp', boost: '+14%'},
+  {key: 'date_of_birth', label: 'Data de Nascimento', meta: 'db', boost: '+14%'},
+];
+
+let cachedLeadFields = null;
+
+async function loadFieldsForMapping() {
+  const list = document.getElementById('field-mapping-list');
+  list.innerHTML = '<p class="text-gray-400 text-sm">Carregando campos do CRM...</p>';
+
+  try {
+    // Pass client_id to use client-specific CRM token
+    const editId = document.getElementById('cf-id').value;
+    const clientParam = editId ? '?client_id=' + editId : '';
+    if (!cachedLeadFields) {
+      cachedLeadFields = await api('/api/crm/lead-fields' + clientParam);
+    }
+
+    const fields = cachedLeadFields.fields || [];
+    const currentClient = editId ? clients.find(c => c.id === editId) : null;
+    const currentFieldMap = currentClient?.crm_credentials?.field_map || {};
+
+    list.innerHTML = '';
+
+    for (const param of META_PARAMS) {
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-3 bg-surface rounded-lg px-3 py-2';
+
+      const optionsHtml = fields.map(f => {
+        const selected = currentFieldMap[param.key] === f.path ? 'selected' : '';
+        const sample = f.sample_value ? ` (ex: ${esc(f.sample_value.slice(0, 30))})` : '';
+        return `<option value="${esc(f.path)}" ${selected}>${esc(f.path)}${sample}</option>`;
+      }).join('');
+
+      row.innerHTML = `
+        <div class="flex-1">
+          <span class="text-sm font-medium">${param.label}</span>
+          <span class="text-xs text-gray-500 ml-1">→ Meta: ${param.meta}</span>
+          <span class="text-xs text-green-400 ml-1">${param.boost}</span>
+        </div>
+        <select class="field-map-select text-xs w-56" data-param="${param.key}">
+          <option value="">Não mapear (usar detecção automática)</option>
+          ${optionsHtml}
+        </select>`;
+      list.appendChild(row);
+    }
+
+    // Show sample lead data
+    if (cachedLeadFields.sample_lead) {
+      const sampleDiv = document.createElement('div');
+      sampleDiv.className = 'mt-3 bg-surface rounded-lg p-3';
+      sampleDiv.innerHTML = `<p class="text-xs text-gray-400 mb-1">Lead exemplo do CRM (${cachedLeadFields.leads_analyzed} analisados, ${fields.length} campos):</p>
+        <pre class="text-xs font-mono text-gray-500 max-h-32 overflow-auto">${esc(JSON.stringify(cachedLeadFields.sample_lead, null, 2).slice(0, 800))}</pre>`;
+      list.appendChild(sampleDiv);
+    }
+
+  } catch (e) {
+    list.innerHTML = `<p class="text-red-400 text-sm">Erro: ${esc(e.message)}</p>`;
+  }
+}
+
+function getFieldMapFromUI() {
+  const map = {};
+  document.querySelectorAll('.field-map-select').forEach(s => {
+    if (s.value) {
+      map[s.dataset.param] = s.value;
+    }
+  });
+  return Object.keys(map).length ? map : null;
+}
+
+async function toggleClient(id, activate) {
+  const action = activate ? 'ativar' : 'desativar';
+  if (!confirm(`${activate ? 'Ativar' : 'Desativar'} este cliente? ${activate ? 'Eventos voltarão a ser enviados.' : 'Nenhum evento será enviado enquanto estiver inativo.'}`)) return;
+  try {
+    await api('/api/clients/' + id, { method: 'PATCH', body: JSON.stringify({ active: activate }) });
+    toast(`Cliente ${activate ? 'ativado' : 'desativado'}!`, 'green');
+    loadClients();
+    loadDashboard();
+  } catch (e) { toast('Erro: ' + e.message, 'red'); }
+}
+
+async function deleteClient(id) {
+  if (!confirm('Remover este cliente e todos os eventos?')) return;
+  try {
+    await api('/api/clients/' + id, { method: 'DELETE' });
+    toast('Cliente removido', 'green');
+    loadClients();
+    loadDashboard();
+  } catch (e) { toast('Erro: ' + e.message, 'red'); }
+}
+
+function copyKey(key) {
+  navigator.clipboard.writeText(key);
+  toast('API Key copiada!', 'green');
+}
+
+// --- Events ---
+async function loadEvents() {
+  const clientId = document.getElementById('ev-client').value;
+  const status = document.getElementById('ev-status').value;
+  const type = document.getElementById('ev-type').value;
+  let url = '/api/events?limit=50';
+  if (clientId) url += '&client_id=' + clientId;
+  if (status) url += '&status=' + status;
+  if (type) url += '&event_type=' + type;
+
+  try {
+    const evts = await api(url);
+    const list = Array.isArray(evts) ? evts : [];
+    const body = document.getElementById('events-body');
+    const empty = document.getElementById('events-empty');
+    body.innerHTML = '';
+    if (!list.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+
+    const clientMap = {};
+    clients.forEach(c => clientMap[c.id] = c.name);
+
+    for (const e of list) {
+      const time = new Date(e.created_at).toLocaleString('pt-BR');
+      const statusCls = e.status === 'sent' ? 'badge-green' : e.status === 'error' ? 'badge-red' : 'badge-yellow';
+      const respStr = e.meta_response ? JSON.stringify(e.meta_response).slice(0, 80) : '-';
+      const platform = (e.event_data && e.event_data.platform) || 'meta';
+      const platBadge = platform === 'google'
+        ? '<span class="badge" style="background:#1a3a1a;color:#34A853">Google</span>'
+        : '<span class="badge" style="background:#172554;color:#60a5fa">Meta</span>';
+      body.innerHTML += `<tr>
+        <td class="text-xs">${time}</td>
+        <td>${esc(clientMap[e.client_id] || e.client_id)}</td>
+        <td>${platBadge}</td>
+        <td><span class="badge badge-blue">${e.event_type}</span></td>
+        <td><span class="badge ${statusCls}">${e.status}</span></td>
+        <td class="text-xs font-mono text-gray-400">${esc(respStr)}</td>
+      </tr>`;
+    }
+  } catch (e) { toast('Erro: ' + e.message, 'red'); }
+}
+
+// --- Test Fire ---
+async function fireTestEvent() {
+  const btn = document.getElementById('btn-fire');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  const result = document.getElementById('test-result');
+
+  const clientId = document.getElementById('t-client').value;
+  if (!clientId) { toast('Selecione um cliente', 'red'); btn.disabled = false; btn.textContent = 'Disparar Evento'; return; }
+
+  const payload = {
+    client_id: clientId,
+    event_type: document.getElementById('t-event-type').value,
+    user_data: {
+      email: document.getElementById('t-email').value || undefined,
+      phone: document.getElementById('t-phone').value || undefined,
+      first_name: document.getElementById('t-fname').value || undefined,
+      last_name: document.getElementById('t-lname').value || undefined,
+    },
+    custom_data: {
+      value: parseFloat(document.getElementById('t-value').value) || undefined,
+      currency: document.getElementById('t-currency').value || undefined,
+      content_name: document.getElementById('t-content').value || undefined,
+    },
+    event_source_url: document.getElementById('t-source-url').value || undefined,
+    test_mode: document.getElementById('t-test-mode').checked,
+  };
+
+  // Clean undefined
+  Object.keys(payload.user_data).forEach(k => { if (!payload.user_data[k]) delete payload.user_data[k]; });
+  Object.keys(payload.custom_data).forEach(k => { if (!payload.custom_data[k]) delete payload.custom_data[k]; });
+
+  result.textContent = 'Enviando...\n\n' + JSON.stringify(payload, null, 2);
+
+  try {
+    const r = await api('/api/events/track', { method: 'POST', body: JSON.stringify(payload) });
+    const statusEmoji = r.status === 'sent' ? '✅' : '❌';
+    result.textContent = statusEmoji + ' RESULTADO\n\n' + JSON.stringify(r, null, 2);
+    result.className = r.status === 'sent'
+      ? 'bg-surface rounded-lg p-4 text-xs font-mono overflow-auto max-h-[500px] text-green-300'
+      : 'bg-surface rounded-lg p-4 text-xs font-mono overflow-auto max-h-[500px] text-red-300';
+    toast(r.status === 'sent' ? 'Evento enviado com sucesso!' : 'Erro no envio', r.status === 'sent' ? 'green' : 'red');
+    loadDashboard();
+    loadEvents();
+  } catch (e) {
+    result.textContent = '❌ ERRO\n\n' + e.message;
+    result.className = 'bg-surface rounded-lg p-4 text-xs font-mono overflow-auto max-h-[500px] text-red-300';
+    toast('Erro: ' + e.message, 'red');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Disparar Evento';
+}
+
+// --- Tabs ---
+function switchTab(name) {
+  document.querySelectorAll('[id^="tab-"]').forEach(t => t.classList.add('hidden'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-active'));
+  document.getElementById('tab-' + name).classList.remove('hidden');
+  document.querySelector(`[data-tab="${name}"]`).classList.add('tab-active');
+  if (name === 'events') loadEvents();
+  if (name === 'crm') loadCRM();
+}
+
+// --- Utils ---
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+function toast(msg, color = 'blue') {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<div class="px-4 py-3 rounded-lg shadow-lg text-sm font-medium" style="background:${color==='green'?'#064e3b':color==='red'?'#450a0a':'#172554'};color:${color==='green'?'#34d399':color==='red'?'#f87171':'#60a5fa'}">${esc(msg)}</div>`;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+// --- CRM DataCrazy ---
+let crmPipelines = [];
+let crmFireData = {};
+
+async function loadCRM() {
+  try {
+    const pipelines = await api('/api/crm/pipelines');
+    crmPipelines = pipelines;
+    document.getElementById('crm-pipelines').textContent = pipelines.length;
+
+    const pipeDiv = document.getElementById('crm-pipelines-list');
+    pipeDiv.innerHTML = '';
+    const pipeSelect = document.getElementById('crm-biz-pipeline');
+    pipeSelect.innerHTML = '<option value="">Todos os pipelines</option>';
+
+    for (const p of pipelines) {
+      pipeSelect.innerHTML += `<option value="${p.id}">${esc(p.name)} (${p.stages_count} stages)</option>`;
+      const stagesHtml = p.stages.map(s =>
+        `<span class="badge badge-blue mr-1 mb-1">${esc(s.name)}</span>`
+      ).join('');
+      pipeDiv.innerHTML += `<div class="bg-surface rounded-lg p-3">
+        <div class="flex justify-between items-center mb-2">
+          <span class="font-medium text-sm">${esc(p.name)}</span>
+          <span class="text-xs text-gray-500">${p.stages_count} stages</span>
+        </div>
+        <div class="flex flex-wrap">${stagesHtml}</div>
+      </div>`;
+    }
+
+    loadLeads();
+    loadBusinesses();
+  } catch (e) {
+    toast('Erro CRM: ' + e.message, 'red');
+    console.error('CRM:', e);
+  }
+}
+
+async function loadLeads() {
+  try {
+    const search = document.getElementById('crm-lead-search').value;
+    let url = '/api/crm/leads?limit=30';
+    if (search) url += '&search=' + encodeURIComponent(search);
+    const leads = await api(url);
+    document.getElementById('crm-leads').textContent = leads.length;
+    const body = document.getElementById('crm-leads-body');
+    const empty = document.getElementById('crm-leads-empty');
+    body.innerHTML = '';
+
+    if (!leads.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+
+    for (const l of leads) {
+      const tags = (l.tags || []).map(t => `<span class="badge badge-yellow text-[10px]">${esc(t)}</span>`).join(' ');
+      const hasContact = l.email || l.phone;
+      body.innerHTML += `<tr>
+        <td class="font-medium text-sm">${esc(l.name)}</td>
+        <td class="text-xs">${esc(l.email || '-')}</td>
+        <td class="text-xs font-mono">${esc(l.phone || '-')}</td>
+        <td>${tags || '<span class="text-gray-500 text-xs">-</span>'}</td>
+        <td>${hasContact
+          ? `<button onclick="prepareCrmFire('lead','${l.id}','${esc(l.name)}','${esc(l.email||'')}','${esc(l.phone||'')}')" class="text-green-400 text-xs hover:underline">Disparar Evento</button>`
+          : '<span class="text-gray-500 text-xs">Sem contato</span>'}</td>
+      </tr>`;
+    }
+  } catch (e) { toast('Erro leads: ' + e.message, 'red'); }
+}
+
+async function loadBusinesses() {
+  try {
+    const pipeId = document.getElementById('crm-biz-pipeline').value;
+    let url = '/api/crm/businesses?limit=30';
+    if (pipeId) url += '&pipeline_id=' + pipeId;
+    const biz = await api(url);
+    document.getElementById('crm-deals').textContent = biz.length;
+    const body = document.getElementById('crm-biz-body');
+    const empty = document.getElementById('crm-biz-empty');
+    body.innerHTML = '';
+
+    if (!biz.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+
+    for (const b of biz) {
+      const val = b.total ? 'R$ ' + parseFloat(b.total).toLocaleString('pt-BR', {minimumFractionDigits:2}) : '-';
+      const statusCls = b.status === 'won' ? 'badge-green' : b.status === 'lost' ? 'badge-red' : 'badge-yellow';
+      const hasContact = b.lead_email || b.lead_phone;
+      body.innerHTML += `<tr>
+        <td class="font-mono text-xs">${esc(b.code || b.id.toString().slice(0,8))}</td>
+        <td class="text-sm">${esc(b.lead_name || '-')}</td>
+        <td class="text-xs">${esc(b.lead_email || '-')}</td>
+        <td class="text-xs font-mono">${esc(b.lead_phone || '-')}</td>
+        <td class="font-medium">${val}</td>
+        <td><span class="badge ${statusCls}">${esc(b.status || 'open')}</span></td>
+        <td>${hasContact
+          ? `<button onclick="prepareCrmFire('business','${b.id}','${esc(b.lead_name||'')}','${esc(b.lead_email||'')}','${esc(b.lead_phone||'')}')" class="text-green-400 text-xs hover:underline">Disparar</button>`
+          : '<span class="text-gray-500 text-xs">Sem contato</span>'}</td>
+      </tr>`;
+    }
+  } catch (e) { toast('Erro businesses: ' + e.message, 'red'); }
+}
+
+function prepareCrmFire(type, id, name, email, phone) {
+  crmFireData = { type, id, name, email, phone };
+  const modal = document.getElementById('crm-fire-modal');
+  modal.classList.remove('hidden');
+
+  // Populate client select
+  const sel = document.getElementById('crm-fire-client');
+  sel.innerHTML = '';
+  for (const c of clients) {
+    sel.innerHTML += `<option value="${c.id}">${esc(c.name)}</option>`;
+  }
+
+  // Auto-select event type based on source
+  document.getElementById('crm-fire-type').value = type === 'business' ? 'Purchase' : 'Lead';
+
+  // Preview
+  document.getElementById('crm-fire-preview').textContent = JSON.stringify({
+    source: type,
+    crm_id: id,
+    name: name,
+    email: email || '(não disponível)',
+    phone: phone || '(não disponível)',
+  }, null, 2);
+
+  document.getElementById('crm-fire-result').classList.add('hidden');
+  modal.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function executeCrmFire() {
+  const btn = document.getElementById('btn-crm-fire');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+
+  const clientId = document.getElementById('crm-fire-client').value;
+  const eventType = document.getElementById('crm-fire-type').value;
+  const testMode = document.getElementById('crm-fire-test').checked;
+
+  let url = `/api/crm/fire-event?client_id=${clientId}&event_type=${eventType}&test_mode=${testMode}`;
+  if (crmFireData.type === 'lead') url += `&lead_id=${crmFireData.id}`;
+  else url += `&business_id=${crmFireData.id}`;
+
+  const result = document.getElementById('crm-fire-result');
+  try {
+    const r = await api(url, { method: 'POST' });
+    const ok = r.status === 'sent';
+    result.textContent = (ok ? '✅' : '❌') + ' RESULTADO\n\n' + JSON.stringify(r, null, 2);
+    result.className = `bg-surface rounded-lg p-3 mt-3 text-xs font-mono ${ok ? 'text-green-300' : 'text-red-300'}`;
+    result.classList.remove('hidden');
+    toast(ok ? 'Evento CRM disparado com sucesso!' : 'Erro no disparo', ok ? 'green' : 'red');
+    loadDashboard();
+  } catch (e) {
+    result.textContent = '❌ ERRO\n\n' + e.message;
+    result.className = 'bg-surface rounded-lg p-3 mt-3 text-xs font-mono text-red-300';
+    result.classList.remove('hidden');
+    toast('Erro: ' + e.message, 'red');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Disparar Evento';
+}
+
+// Auto-connect on load
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('dc-api-url');
+  const savedKey = localStorage.getItem('dc-master-key');
+  // Default: same origin (works both local and deployed)
+  document.getElementById('api-url').value = saved || window.location.origin;
+  if (savedKey) {
+    document.getElementById('master-key').value = savedKey;
+    // Auto-connect se já tem key salva
+    setTimeout(() => connect(), 300);
+  }
+});
+
+const origConnect = connect;
+connect = async function() {
+  localStorage.setItem('dc-api-url', document.getElementById('api-url').value);
+  localStorage.setItem('dc-master-key', document.getElementById('master-key').value);
+  await origConnect();
+};
+</script>
+</body>
+</html>
