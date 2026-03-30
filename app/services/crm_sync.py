@@ -18,6 +18,7 @@ from app.services.meta_capi import send_event as meta_send_event
 from app.services.google_capi import send_event as google_send_event
 
 logger = logging.getLogger("crm_sync")
+logging.basicConfig(level=logging.INFO)
 
 # State
 _last_check: dict[str, str] = {}
@@ -664,8 +665,8 @@ async def run_full_sync(client_id: str):
                         row = existing.first()
                         if row and row.status == "sent":
                             continue
-                except Exception:
-                    pass
+                except Exception as dedup_err:
+                    logger.error(f"[full_sync] Google dedup error: {dedup_err}")
 
                 try:
                     google_result = await google_send_event(
