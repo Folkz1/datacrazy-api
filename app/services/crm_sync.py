@@ -549,12 +549,34 @@ async def run_full_sync(client_id: str):
 
             biz_id = biz.get("id", "")
             active_pixels = client.get_active_pixels()
+            active_google = client.get_active_google_pixels()
 
+            if not active_pixels and not active_google:
+                _full_sync_status[client_id]["skipped"] += 1
+                continue
+
+            name = lead.get("name") or ""
+            field_map = (client.crm_credentials or {}).get("field_map", {})
+            user_data = {
+                "email": email,
+                "phone": phone,
+                "first_name": name.split(" ")[0] or None,
+                "last_name": " ".join(name.split(" ")[1:]) or None,
+                "external_id": str(biz.get("leadId", "")),
+                "country": "br",
+            }
+            user_data = {k: v for k, v in user_data.items() if v}
+
+            custom_data = {}
+            if biz.get("total"):
+                custom_data["value"] = float(biz["total"])
+                custom_data["currency"] = "BRL"
+
+            # --- Meta CAPI ---
             for pixel in active_pixels:
                 px_id = pixel["pixel_id"]
                 px_token = pixel["access_token"]
 
-                # Dedup
                 try:
                     async with async_session() as db:
                         existing = await db.execute(
@@ -576,23 +598,6 @@ async def run_full_sync(client_id: str):
                 except Exception:
                     pass
 
-                name = lead.get("name") or ""
-                field_map = (client.crm_credentials or {}).get("field_map", {})
-                user_data = {
-                    "email": email,
-                    "phone": phone,
-                    "first_name": name.split(" ")[0] or None,
-                    "last_name": " ".join(name.split(" ")[1:]) or None,
-                    "external_id": str(biz.get("leadId", "")),
-                    "country": "br",
-                }
-                user_data = {k: v for k, v in user_data.items() if v}
-
-                custom_data = {}
-                if biz.get("total"):
-                    custom_data["value"] = float(biz["total"])
-                    custom_data["currency"] = "BRL"
-
                 dedup_key = f"{client.id}:{biz_id}:{event_type}:{px_id}"
                 deterministic_event_id = hashlib.sha256(dedup_key.encode()).hexdigest()[:32]
 
@@ -607,6 +612,7 @@ async def run_full_sync(client_id: str):
                     )
 
                     async with async_session() as db:
+                        pipeline_id = stage_info.get("pipeline_id", "") if isinstance(stage_info, dict) else ""
                         event = Event(
                             client_id=client.id,
                             event_type=event_type,
@@ -616,6 +622,8 @@ async def run_full_sync(client_id: str):
                                 "pixel_id": px_id,
                                 "pixel_label": pixel.get("label", ""),
                                 "stage": stage_name,
+                                "stage_id": stage_id,
+                                "pipeline_id": pipeline_id,
                                 "status": status,
                             },
                             user_data=user_data,
@@ -633,7 +641,73 @@ async def run_full_sync(client_id: str):
 
                 except Exception as e:
                     _full_sync_status[client_id]["errors"] += 1
-                    logger.error(f"[full_sync] Error firing for {name}: {e}")
+                    logger.error(f"[full_sync] Error firing Meta for {name}: {e}")
+
+            # --- Google GA4 ---
+            for gpixel in active_google:
+                gp_mid = gpixel["measurement_id"]
+                gp_secret = gpixel["api_secret"]
+                gp_label = gpixel.get("label", "")
+
+                try:
+                    async with async_session() as db:
+                        existing = await db.execute(
+                            text("""SELECT id, status FROM events
+                                   WHERE client_id = :cid
+                                   AND event_data->>'business_id' = :bid
+                                   AND event_type = :etype
+                                   AND event_data->>'platform' = 'google'
+                                   AND event_data->>'measurement_id' = :mid
+                                   LIMIT 1"""),
+                            {"cid": str(client.id), "bid": str(biz_id), "mid": gp_mid, "etype": event_type}
+                        )
+                        row = existing.first()
+                        if row and row.status == "sent":
+                            continue
+                except Exception:
+                    pass
+
+                try:
+                    google_result = await google_send_event(
+                        measurement_id=gp_mid,
+                        api_secret=gp_secret,
+                        event_type=event_type,
+                        user_data=user_data,
+                        custom_data=custom_data or None,
+                    )
+
+                    async with async_session() as db:
+                        pipeline_id = stage_info.get("pipeline_id", "") if isinstance(stage_info, dict) else ""
+                        event = Event(
+                            client_id=client.id,
+                            event_type=event_type,
+                            event_data={
+                                "source": "full_sync",
+                                "business_id": biz_id,
+                                "platform": "google",
+                                "measurement_id": gp_mid,
+                                "pixel_label": gp_label,
+                                "stage": stage_name,
+                                "stage_id": stage_id,
+                                "pipeline_id": pipeline_id,
+                                "status": status,
+                            },
+                            user_data=user_data,
+                            meta_response=google_result.get("response", {}),
+                            status="sent" if google_result["success"] else "error",
+                            error_message=google_result.get("error"),
+                        )
+                        db.add(event)
+                        await db.commit()
+
+                    if google_result["success"]:
+                        _full_sync_status[client_id]["fired"] += 1
+                    else:
+                        _full_sync_status[client_id]["errors"] += 1
+
+                except Exception as e:
+                    _full_sync_status[client_id]["errors"] += 1
+                    logger.error(f"[full_sync] Error firing Google for {name}: {e}")
 
         skip += page_size
         if skip >= total_estimate or len(businesses) < page_size:
