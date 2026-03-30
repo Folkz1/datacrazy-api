@@ -57,6 +57,10 @@ def build_ga4_payload(
         if custom_data.get("content_name"):
             params["item_name"] = custom_data["content_name"]
 
+    # Engagement time — obrigatorio para eventos aparecerem no GA4 Realtime
+    params["engagement_time_msec"] = "100"
+    params["session_id"] = hashlib.md5((user_data.get("email") or user_data.get("phone") or "unknown").encode()).hexdigest()[:10]
+
     # User ID (external_id do CRM)
     user_id = None
     if user_data.get("external_id"):
